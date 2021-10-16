@@ -3,11 +3,10 @@ import os
 import warnings
 
 import numpy as np
-import pandas as pd
 
-from seatable_api import Base, Account
+from seatable_api import Account
 
-from .utils import process_records, validate_comparison, is_iterable
+from .utils import process_records, validate_comparison, is_iterable, make_iterable
 
 
 class Table:
@@ -31,6 +30,8 @@ class Table:
     """
 
     def __init__(self, table, base=None, auth_token=None, server=None):
+        # If the table is given as index (i.e. first table in base X), `base`
+        # must not be `None`
         if isinstance(table, int) and isinstance(base, type(None)):
             raise ValueError('Must provide a `base` when giving `table` index '
                              'instead of name.')
@@ -116,23 +117,30 @@ class Table:
         return Column(name=name, table=self)
 
     def __getitem__(self, item):
+        # If single string assume this is a column
         if isinstance(item, str):
             if item not in self.columns:
                 raise AttributeError(f'Table has no "{item}" column')
             return Column(name=item, table=self)
-        elif isinstance(item, Query):
-            query = f'SELECT * FROM {self.name} where {item.query}'
-            records = self.query(query, no_limit=True)
-            return process_records(records, columns=self.columns)
-        elif isinstance(item, Column):
-            if not item.dtype == 'checkbox':
-                raise TypeError('Can only query by columns with dtype '
-                                f'"checkbox", got "{item.dtype}"')
-            query = f'SELECT * FROM {self.name} where {item.name}'
-            records = self.query(query, no_limit=True)
-            return process_records(records, columns=self.columns)
+        elif isinstance(item, (Filter, Column)):
+            cols = limit = None
+            where = item
+        # If tuple assume it's (filter, columns)
+        elif isinstance(item, tuple) and len(item) in (2, 3):
+            if len(item) == 2:
+                where, cols = item
+                limit = None
+            else:
+                where, cols, limit = item
+            miss = np.asarray(cols)[~np.isin(cols, self.columns)]
+            if any(miss):
+                raise KeyError(f'{miss} not in columns')
+        else:
+            raise AttributeError(f'Unable to slice table by {type(item)}')
 
-        raise AttributeError(f'Unable to slice table by {type(item)}')
+        query = create_query(self, columns=cols, where=where, limit=limit)
+        records = self.query(query, no_limit=True)
+        return process_records(records)
 
     def __repr__(self):
         shape = self.shape
@@ -151,7 +159,8 @@ class Table:
     @property
     def shape(self):
         """Shape of table."""
-        n_rows = self.query('SELECT COUNT(*)')[0].get('COUNT(*)', 'NA')
+        n_rows = self.query('SELECT COUNT(*)',
+                            no_limit=False)[0].get('COUNT(*)', 'NA')
         return (n_rows, len(self.columns))
 
     def head(self, n=5):
@@ -172,6 +181,10 @@ class Table:
         query :     str
                     The SQL query. The "FROM {TABLENAME}" will be automatically
                     added to the end of the query if not already present.
+        no_limit :  bool
+                    By default, the SeaTable API limits queries to 100 rows. If
+                    True, we will override this by adding `LIMIT {table.shape[0]}`
+                    to the query.
 
         """
         if 'from' not in query.lower():
@@ -183,6 +196,7 @@ class Table:
 
 class Column:
     """Class representing a table column."""
+
     def __init__(self, name, table):
         self.name = name
         self.table = table
@@ -198,40 +212,40 @@ class Column:
         _ = validate_comparison(self, other)
         if isinstance(other, str):
             # Escape the value
-            return Query(f"{self.name} = '{other}'")
+            return Filter(f"{self.name} = '{other}'")
         else:
             # This is assuming other is a number
-            return Query(f"{self.name} = {other}")
+            return Filter(f"{self.name} = {other}")
 
     def __ge__(self, other):
-        return Query((self > other).query.replace('>', '>='))
+        return Filter((self > other).query.replace('>', '>='))
 
     def __gt__(self, other):
         _ = validate_comparison(self, other)
         if isinstance(other, numbers.Number):
-            return Query(f"{self.name} > {other}")
+            return Filter(f"{self.name} > {other}")
         raise TypeError(f"'>' not supported between column and {type(other)}")
 
     def __le__(self, other):
-        return Query((self > other).query.replace('<', '<='))
+        return Filter((self > other).query.replace('<', '<='))
 
     def __lt__(self, other):
         _ = validate_comparison(self, other)
         if isinstance(other, numbers.Number):
-            return Query(f"{self.name} < {other}")
+            return Filter(f"{self.name} < {other}")
         raise TypeError(f"'>' not supported between column and {type(other)}")
 
     def __and__(self, other):
         if isinstance(other, Column):
             if other.dtype == 'checkbox':
-                return Query(f'{self.name} AND {other.name}')
+                return Filter(f'{self.name} AND {other.name}')
 
         raise TypeError(f'Unable to combine Column and "{type(other)}"')
 
     def __or__(self, other):
         if isinstance(other, Column):
             if other.dtype == 'checkbox':
-                return Query(f'{self.name} OR {other.name}')
+                return Filter(f'{self.name} OR {other.name}')
 
         raise TypeError(f'Unable to combine Column and "{type(other)}"')
 
@@ -248,7 +262,7 @@ class Column:
         _ = validate_comparison(self, other, allow_iterable=True)
         other = tuple(other)
 
-        return Query(f"{self.name} IN {str(other)}")
+        return Filter(f"{self.name} IN {str(other)}")
 
     @property
     def dtype(self):
@@ -265,8 +279,8 @@ class Column:
         return process_records(rows).iloc[:, 0].values
 
 
-class Query:
-    """Class representing an SQL query."""
+class Filter:
+    """Class representing an SQL WHERE query."""
     def __init__(self, query):
         self.query = query
 
@@ -278,27 +292,27 @@ class Query:
 
     def __neg__(self):
         if self.query.startswith('NOT'):
-            return Query(self.query[4:])
+            return Filter(self.query[4:])
         else:
-            return Query(f'NOT {self.query}')
+            return Filter(f'NOT {self.query}')
 
     def __and__(self, other):
-        if isinstance(other, Query):
-            return Query(f'{self.query} AND {other.query}')
+        if isinstance(other, Filter):
+            return Filter(f'{self.query} AND {other.query}')
         elif isinstance(other, Column):
             if other.dtype == 'checkbox':
-                return Query(f'{self.query} AND {other.name}')
+                return Filter(f'{self.query} AND {other.name}')
 
-        raise TypeError(f'Unable to combine Query and "{type(other)}"')
+        raise TypeError(f'Unable to combine Filter and "{type(other)}"')
 
     def __or__(self, other):
-        if isinstance(other, Query):
-            return Query(f'{self.query} OR {other.query}')
+        if isinstance(other, Filter):
+            return Filter(f'{self.query} OR {other.query}')
         elif isinstance(other, Column):
             if other.dtype == 'checkbox':
-                return Query(f'{self.query} OR {other.name}')
+                return Filter(f'{self.query} OR {other.name}')
 
-        raise TypeError(f'Unable to combine Query and "{type(other)}"')
+        raise TypeError(f'Unable to combine Filter and "{type(other)}"')
 
 
 class LocIndexer:
@@ -351,3 +365,33 @@ class iLocIndexer:
             stop = s.stop
 
         return start, stop, s.step
+
+
+def create_query(table, columns=None, where=None, limit=None):
+    """Create SQL query."""
+    if not isinstance(columns, type(None)):
+        columns = make_iterable(columns).astype(str)
+        if len(columns) == 1:
+            q = f'SELECT {columns[0]}'
+        else:
+            q = f'SELECT {", ".join(columns)}'
+    else:
+        q = ' SELECT *'
+
+    q += f' FROM {table.name}'
+
+    if not isinstance(where, type(None)):
+        if isinstance(where, Filter):
+            q += f' WHERE {where.query}'
+        elif isinstance(where, Column):
+            if not where.dtype == 'checkbox':
+                raise TypeError('Can only query by columns with dtype '
+                                f'"checkbox", got "{where.dtype}"')
+            q += f' WHERE {where.name}'
+        else:
+            raise TypeError(f'Unable to construct WHERE query from "{type(where)}"')
+
+    if isinstance(limit, numbers.Number):
+        q += f' LIMIT {limit}'
+
+    return q

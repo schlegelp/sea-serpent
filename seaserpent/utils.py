@@ -4,7 +4,8 @@ import numpy as np
 import requests
 import numbers
 
-def process_records(records, columns=None):
+
+def process_records(records, columns=None, drop_id_col=True):
     """Turn records into pandas DataFrame.
 
     Parameters
@@ -30,11 +31,30 @@ def process_records(records, columns=None):
     if not isinstance(columns, type(None)):
         df = df[columns]
 
+    if drop_id_col and '_id' in df.columns:
+        df.drop('_id', axis=1, inplace=True)
+
     return df
 
 
 def get_auth_token(username, password, server='https://cloud.seatable.io'):
-    """Retriever your user's auth token."""
+    """Retrieve your auth token.
+
+    Parameters
+    ----------
+    username :  str
+                Login name or email address.
+    password :  str
+                Your password.
+    server :    str
+                URL to your seacloud server.
+
+    Returns
+    -------
+    dict
+                Dictionary {'token': 'YOURTOKEN'}
+
+    """
     while server.endswith('/'):
         server = server[:-1]
 
@@ -53,6 +73,13 @@ def is_iterable(x):
     if isinstance(x, (list, np.ndarray, set, tuple)):
         return True
     return False
+
+
+def make_iterable(x):
+    """Force x into iterable."""
+    if not is_iterable(x):
+        x = [x]
+    return np.asarray(x)
 
 
 def validate_comparison(column, other, allow_iterable=False):
