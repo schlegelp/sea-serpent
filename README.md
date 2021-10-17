@@ -4,7 +4,8 @@ A dataframe-like wrapper around the [SeaTable](https://seatable.io/en/) API.
 This library tries to make interacting with SeaTables as if you were working
 with a local pandas DataFrame.
 
-At this early sstage, `sea-serpent` provides a read-only interface.
+Fair warning: `sea-serpent` is at an early stage and the interface might still
+change substantially.
 
 ## Examples
 
@@ -87,17 +88,37 @@ Column <column="column1", table="LH_bodies", datatype=number>
 ```python
 >>> # Overwrite the whole column
 >>> table['checked'] = False
+>>> table.head()
+    column1     labels   checked
+0         1          A     False
+1         2          B     False
+2         3          C     False
 >>> # Alternatively pass a list of values
 >>> table['checked'] = [False, True, False]
+>>> table.head()
+    column1     labels   checked
+0         1          A     False
+1         2          B      True
+2         3          C     False
 >>> # Write to a subset of the column
 >>> table.loc[:2, 'checked'] = False
 >>> table.loc[table.labels == 'C', 'checked'] = True
+>>> table.head()
+    column1     labels   checked
+0         1          A     False
+1         2          B     False
+2         3          C      True
 ```
 
 ### Deleting a column
 
 ```python
 >>> table['checked'].delete()
+>>> table.head()
+    column1     labels
+0         1          A
+1         2          B
+2         3          C
 ```
 
 ### Creating a new table
@@ -105,3 +126,8 @@ Column <column="column1", table="LH_bodies", datatype=number>
 ```python
 >>> table = ss.Table.new(base='MyBase', table_name='MyNewTable')
 ```
+
+## TODOs
+
+- export pandas DataFrame to SeaTable
+- create new table from DataFrame
