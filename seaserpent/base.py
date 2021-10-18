@@ -6,6 +6,7 @@ import warnings
 import numpy as np
 import pandas as pd
 
+from functools import partial
 from seatable_api.main import SeaTableAPI
 from tqdm.auto import trange
 
@@ -149,8 +150,8 @@ class Table:
         records = [{'row_id': r['_id'],
                     'row': {key: v}} for r, v in zip(row_ids, values)]
 
-        r = batch_update_rows(self, records,
-                              batch_size=self.max_operations)
+        r = batch_upload(partial(self.base.batch_update_rows, self.name),
+                         records, batch_size=self.max_operations)
 
         if 'success' in r:
             logger.info('Write successful!')
@@ -190,6 +191,52 @@ class Table:
         n_rows = self.query('SELECT COUNT(*)',
                             no_limit=False)[0].get('COUNT(*)', 'NA')
         return (n_rows, len(self.columns))
+
+    @classmethod
+    def from_frame(cls, df, table_name, base, auth_token=None, server=None):
+        """Create a new table from pandas DataFrame.
+
+        Parameters
+        ----------
+        df :        pandas.DataFrame
+                    DataFrame to export to SeaTable. Datatypes are infered:
+                      - `object` -> text
+                      - int, float -> number
+                      - bool: -> check box
+        name_name : str
+                    Name of the new table.
+        base :      str | int
+                    Name or ID of base.
+
+        Returns
+        -------
+        Table
+                    Will be initialized with `read_only=False`.
+
+        """
+        # Some sanity checks
+        if len(df.columns) < len(np.unique(df.columns)):
+            raise ValueError('Table must not contain duplicate column names')
+
+        table = cls.new(table_name=table_name, base=base,
+                        auth_token=auth_token, server=server)
+
+        # Create the columns (infer data types)
+        for c in df.columns:
+            col = df[c]
+
+            if col.dtype == object:
+                col = col.astype(str)
+                dtype = str
+            else:
+                dtype = col.dtype.kind
+
+            table.add_column(col_name=c, col_type=dtype)
+
+        # Add the actual data
+        table.append(df)
+
+        return table
 
     @classmethod
     def new(cls, table_name, base, auth_token=None, server=None):
@@ -267,6 +314,33 @@ class Table:
         if not resp.get('name'):
             raise ValueError(f'Error writing to table: {resp}')
         logger.info(f'Column "{col_name}" added.')
+
+    def append(self, other):
+        """Append rows of `other` to the end of this table.
+
+        Columns in `other` that are not in the table are ignored.
+
+        Parameters
+        ----------
+        other :     pandas.DataFrame
+
+        """
+        if not isinstance(other, pd.DataFrame):
+            raise TypeError(f'`other` must be DataFrame, got "{type(other)}"')
+
+        other = other[other.columns[np.isin(other.columns, self.columns)]]
+
+        if not other.shape[1]:
+            raise ValueError('None of the columns in `other` are in table')
+
+        records = other.to_dict(orient='records')
+
+        r = batch_upload(partial(self.base.batch_append_rows, self.name),
+                         records, desc='Appending',
+                         batch_size=self.max_operations)
+
+        if 'success' in r:
+            logger.info('Rows successfully added!')
 
     def fetch_logs(self, page=1, per_page=25):
         """Fetch activity logs for this table."""
@@ -424,8 +498,9 @@ class Column:
         records = [{'row_id': r,
                     'row': {self.name: None}} for r in row_ids]
 
-        r = batch_update_rows(self.table, records, desc='Clearing',
-                              batch_size=self.table.max_operations)
+        r = batch_upload(partial(self.table.base.batch_update_rows, self.name),
+                         records, desc='Clearing',
+                         batch_size=self.table.max_operations)
 
         if 'success' in r:
             logger.info('Clear successful!')
@@ -584,8 +659,8 @@ class LocIndexer:
         records = [{'row_id': r,
                     'row': {col: v}} for r, v in zip(row_ids, values)]
 
-        r = batch_update_rows(self.table, records,
-                              batch_size=self.table.max_operations)
+        r = batch_upload(partial(self.table.base.batch_update_rows, self.name),
+                         records, batch_size=self.table.max_operations)
 
         if 'success' in r:
             logger.info('Write successful!')
@@ -692,18 +767,19 @@ def create_query(table, columns=None, where=None, limit=None):
     return q
 
 
-def batch_update_rows(table, records, batch_size=1000, desc='Writing',
-                      omit_errors=False):
+def batch_upload(func, records, batch_size=1000, desc='Writing',
+                 omit_errors=False):
     """Update rows in batches of defined size."""
-    no_errors = True
     for i in trange(0, len(records), batch_size,
                     disable=len(records) < batch_size,
                     desc=desc):
         batch = records[i: i + batch_size]
 
-        r = table.base.batch_update_rows(table.name, rows_data=batch)
+        r = func(rows_data=batch)
 
-        if not r.get('success'):
+        # Catching error messages for the different functions is a bit hit and
+        # miss without a documented schema
+        if not r.get('success') or 'inserted_row_count' not in r:
             if not omit_errors:
                 raise ValueError(f'Error writing to table: {r}')
             else:

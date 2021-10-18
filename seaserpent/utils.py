@@ -10,25 +10,25 @@ from seatable_api import Account
 from seatable_api.constants import ColumnTypes
 
 COLUMN_TYPES = {
-    (int, float, 'int', 'float', 'number'): ColumnTypes.NUMBER,       # number
-    (str, 'str', 'text'): ColumnTypes.TEXT,                 # text
-    ('long text', ): ColumnTypes.LONG_TEXT,                 # long text
-    (bool, 'bool', 'checkbox'): ColumnTypes.CHECKBOX,       # checkbox
-    ('date', ): ColumnTypes.DATE,                           # date & time
-    ('select', 'single_select'): ColumnTypes.SINGLE_SELECT,  # single select
-    ('multiple_select', ): ColumnTypes.MULTIPLE_SELECT,     # multiple select
-    ('image', ): ColumnTypes.IMAGE,                         # image
-    ('file', ): ColumnTypes.FILE,                           # file
-    ('collaborator', ): ColumnTypes.COLLABORATOR,           # collaborator
-    ('link', ): ColumnTypes.LINK,                           # link to other records
-    ('formula', ): ColumnTypes.FORMULA,                     # formula
-    ('creator', ): ColumnTypes.CREATOR,                     # creator
-    ('ctime', ): ColumnTypes.CTIME,                         # create time
-    ('last_modifier', ): ColumnTypes.LAST_MODIFIER,         # last modifier
-    ('mtime', ): ColumnTypes.MTIME,                         # modify time
-    ('location', 'geolocation'): ColumnTypes.GEOLOCATION,   # geolocation
-    ('auto_number', ): ColumnTypes.AUTO_NUMBER,             # auto munber
-    ('url', ): ColumnTypes.URL,                             # URL
+    (int, float, 'i', 'u', 'int', 'f', 'float', 'number'): ColumnTypes.NUMBER,  # number
+    (str, 'S', 'str', 'text'): ColumnTypes.TEXT,                                # text
+    ('long text', ): ColumnTypes.LONG_TEXT,                                     # long text
+    (bool, 'b', 'bool', 'checkbox'): ColumnTypes.CHECKBOX,                      # checkbox
+    ('date', ): ColumnTypes.DATE,                                               # date & time
+    ('select', 'single_select'): ColumnTypes.SINGLE_SELECT,                     # single select
+    ('multiple_select', ): ColumnTypes.MULTIPLE_SELECT,                         # multiple select
+    ('image', ): ColumnTypes.IMAGE,                                             # image
+    ('file', ): ColumnTypes.FILE,                                               # file
+    ('collaborator', ): ColumnTypes.COLLABORATOR,                               # collaborator
+    ('link', ): ColumnTypes.LINK,                                               # link to other records
+    ('formula', ): ColumnTypes.FORMULA,                                         # formula
+    ('creator', ): ColumnTypes.CREATOR,                                         # creator
+    ('ctime', ): ColumnTypes.CTIME,                                             # create time
+    ('last_modifier', ): ColumnTypes.LAST_MODIFIER,                             # last modifier
+    ('mtime', ): ColumnTypes.MTIME,                                             # modify time
+    ('location', 'geolocation'): ColumnTypes.GEOLOCATION,                       # geolocation
+    ('auto_number', ): ColumnTypes.AUTO_NUMBER,                                 # auto munber
+    ('url', ): ColumnTypes.URL,                                                 # URL
 }
 
 
