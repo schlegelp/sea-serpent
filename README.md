@@ -5,7 +5,13 @@ This library tries to make interacting with SeaTables as if you were working
 with a local pandas DataFrame.
 
 Fair warning: `sea-serpent` is at an early stage and the interface might still
-change substantially.
+change somewhat.
+
+## Install
+
+```bash
+pip3 install git+git://github.com/schlegelp/sea-serpent@master
+```
 
 ## Examples
 
@@ -19,7 +25,7 @@ change substantially.
 {'token': 'somelongassstring1234567@£$^@£$^£'}
 ```
 
-For future use, it's easiest if you were to set your default server and auth
+For future use: it's easiest if you were to set your default server and auth
 token as `SEATABLE_SERVER` and `SEATABLE_TOKEN` environment variable.
 
 ### Initializing a table
