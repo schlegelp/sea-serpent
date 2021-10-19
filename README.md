@@ -10,7 +10,7 @@ change somewhat.
 ## Install
 
 ```bash
-pip3 install git+git://github.com/schlegelp/sea-serpent@master
+pip3 install git+git://github.com/schlegelp/sea-serpent@main
 ```
 
 ## Examples
