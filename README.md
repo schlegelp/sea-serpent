@@ -25,8 +25,8 @@ pip3 install git+git://github.com/schlegelp/sea-serpent@master
 {'token': 'somelongassstring1234567@£$^@£$^£'}
 ```
 
-For future use: it's easiest if you were to set your default server and auth
-token as `SEATABLE_SERVER` and `SEATABLE_TOKEN` environment variable.
+For future use set your default server and auth token as `SEATABLE_SERVER` and
+`SEATABLE_TOKEN` environment variable, respectively.
 
 ### Initializing a table
 
