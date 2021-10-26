@@ -193,13 +193,13 @@ class Table:
         return (n_rows, len(self.columns))
 
     @classmethod
-    def from_frame(cls, df, table_name, base, auth_token=None, server=None):
+    def from_frame(cls, df, table_name, base, id_col=0, auth_token=None, server=None):
         """Create a new table from pandas DataFrame.
 
         Parameters
         ----------
         df :        pandas.DataFrame
-                    DataFrame to export to SeaTable. Datatypes are infered:
+                    DataFrame to export to SeaTable. Datatypes are inferred:
                       - `object` -> text
                       - int, float -> number
                       - bool: -> check box
@@ -207,6 +207,8 @@ class Table:
                     Name of the new table.
         base :      str | int
                     Name or ID of base.
+        id_col :    str | int
+                    Name or index of the ID column to use.
 
         Returns
         -------
@@ -218,23 +220,42 @@ class Table:
         if len(df.columns) < len(np.unique(df.columns)):
             raise ValueError('Table must not contain duplicate column names')
 
-        table = cls.new(table_name=table_name, base=base,
+        if isinstance(id_col, int):
+            id_col = df.columns[id_col]
+
+        if id_col not in df.columns:
+            raise ValueError(f'ID column "{id_col}" not among columns.')
+
+        if df[id_col].dtype == object:
+            id_col_dtype = str
+        else:
+            id_col_dtype = map_columntype(df[id_col].dtype.kind)
+        columns = [{'column_name': id_col,
+                    'column_type': id_col_dtype.name.lower()}]
+
+        table = cls.new(table_name=table_name, base=base, columns=columns,
                         auth_token=auth_token, server=server)
+        logger.info('New table created.')
 
         # Create the columns (infer data types)
         for c in df.columns:
+            # Skip ID column
+            if c == id_col:
+                continue
+
             col = df[c]
 
             if col.dtype == object:
-                col = col.astype(str)
                 dtype = str
             else:
                 dtype = col.dtype.kind
 
             table.add_column(col_name=c, col_type=dtype)
+        logger.info('New columns added.')
 
         # Add the actual data
         table.append(df)
+        logger.info('Data uploaded.')
 
         return table
 
