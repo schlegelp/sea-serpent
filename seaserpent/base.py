@@ -239,7 +239,7 @@ class Table:
         return table
 
     @classmethod
-    def new(cls, table_name, base, auth_token=None, server=None):
+    def new(cls, table_name, base, columns=None, auth_token=None, server=None):
         """Create a new table.
 
         Parameters
@@ -248,6 +248,15 @@ class Table:
                     Name of the new table.
         base :      str | int
                     Name or ID of base.
+        columns :   list, optional
+                    If provided, must be a list of dicts:
+
+                    [{'column_name': 'First column',
+                      'column_type': 'number',
+                      'column_data': None}]
+
+                    If not provided, the table will be initialized with a single
+                    "Name" column.
 
         Returns
         -------
@@ -264,7 +273,7 @@ class Table:
         if table_name in existing_names:
             raise ValueError(f'Base already contains a table named "{table_name}"')
 
-        base.add_table(table_name, lang='en')
+        base.add_table(table_name, lang='en', columns=columns)
 
         return cls(table=table_name, base=base, read_only=False,
                    auth_token=auth_token, server=server)
