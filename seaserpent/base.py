@@ -769,7 +769,8 @@ def create_query(table, columns=None, where=None, limit=None):
 
 def batch_upload(func, records, batch_size=1000, desc='Writing',
                  omit_errors=False):
-    """Update rows in batches of defined size."""
+    """Upload/update rows in batches of defined size."""
+    no_errors = True
     for i in trange(0, len(records), batch_size,
                     disable=len(records) < batch_size,
                     desc=desc):
@@ -779,11 +780,12 @@ def batch_upload(func, records, batch_size=1000, desc='Writing',
 
         # Catching error messages for the different functions is a bit hit and
         # miss without a documented schema
-        if not r.get('success') or 'inserted_row_count' not in r:
+        if not r.get('success') and 'inserted_row_count' not in r:
+            msg = f'Error writing to table (batch {int(i / batch_size)}/{len(records) // batch_size + 1}): {r}'
             if not omit_errors:
-                raise ValueError(f'Error writing to table: {r}')
+                raise ValueError(msg)
             else:
-                logger.error(f'Error writing to table: {r}')
+                logger.error(msg)
                 no_errors = False
 
     return {'success'} if no_errors else {'errors'}
