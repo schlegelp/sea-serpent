@@ -129,11 +129,34 @@ Column <column="column1", table="LH_bodies", datatype=number>
 
 ### Creating a new table
 
+Empty table:
+
 ```python
->>> table = ss.Table.new(base='MyBase', table_name='MyNewTable')
+>>> table = ss.Table.new(table_name='MyNewTable', base='MyBase')
 ```
 
-## TODOs
+From pandas DataFrame:
 
-- export pandas DataFrame to SeaTable
-- create new table from DataFrame
+```python
+>>> table = ss.Table.from_frame(df, table_name='MyNewTable', base='MyBase')
+```
+
+### Linking tables
+
+Create links:
+
+```python
+>>> table.link(other_table='OtherTable',    # name of the other table (must be same base)
+...            link_on='Column1',           # column in this table to link on
+...            link_on_other='ColumnA',     # column in other table to link on
+...            link_col='OtherTableLinks')  # name of column to store links in
+```
+
+Create column that pulls data from linked table:
+
+```python
+>>> table.add_linked_column(col_name='LinkedData',
+...                         link_col='OtherTableLinks',
+...                         link_on='some_value',
+...                         formula='lookup')
+```
