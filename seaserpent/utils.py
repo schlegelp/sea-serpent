@@ -21,6 +21,7 @@ COLUMN_TYPES = {
     ('file', ): ColumnTypes.FILE,                                               # file
     ('collaborator', ): ColumnTypes.COLLABORATOR,                               # collaborator
     ('link', ): ColumnTypes.LINK,                                               # link to other records
+    ('link-formula', ): ColumnTypes.LINK_FORMULA,                               # pull values from other table via link
     ('formula', ): ColumnTypes.FORMULA,                                         # formula
     ('creator', ): ColumnTypes.CREATOR,                                         # creator
     ('ctime', ): ColumnTypes.CTIME,                                             # create time
@@ -231,7 +232,7 @@ def find_base(base=None, required_table=None, auth_token=None, server=None):
         for bs in cand_bases:
             bb = account.get_base(*bs)
             for t in bb.get_metadata().get('tables', []):
-                if t.get('name', None) == required_table:
+                if t.get('name', None) == required_table or t.get('_id', None) == required_table:
                     bases.append(bs)
                     break
     else:
@@ -254,8 +255,9 @@ def write_access(func):
     def inner(*args, **kwargs):
         self = args[0]
         if self.read_only:
-            raise ValueError('Table is read-only. Please initialize with '
-                             '`read_only=False` to allow writing to it.')
+            raise ValueError('Table is read-only to prevent accidental edits. '
+                             'Please initialize with `read_only=False` to allow '
+                             'writing to it.')
         return func(*args, **kwargs)
     return inner
 

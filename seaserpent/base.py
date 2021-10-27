@@ -8,6 +8,7 @@ import pandas as pd
 
 from functools import partial
 from seatable_api.main import SeaTableAPI
+from seatable_api.constants import ColumnTypes
 from tqdm.auto import trange
 
 from .utils import (process_records, validate_comparison, is_iterable,
@@ -16,6 +17,15 @@ from .utils import (process_records, validate_comparison, is_iterable,
 
 logger = logging.getLogger(__name__)
 logger.setLevel('INFO')
+
+if not logger.handlers:
+    sh = logging.StreamHandler()
+    sh.setLevel(logging.DEBUG)
+    # Create formatter and add it to the handlers
+    formatter = logging.Formatter(
+        '%(levelname)-5s : %(message)s')
+    sh.setFormatter(formatter)
+    logger.addHandler(sh)
 
 
 class Table:
@@ -36,7 +46,6 @@ class Table:
     server :        str, optional
                     Must be provided explicitly or set as ``SEATABLE_SERVER``
                     environment variable.
-
     read_only :     bool
                     Whether to allow writes to table. The main purpose of this
                     is to avoid accidental edits when all you want is reading
@@ -79,6 +88,9 @@ class Table:
         self._meta = None
         self.name = table
         self.fetch_meta()
+
+        if self.name == self.id:
+            self.name = self.meta['name']
 
         self.loc = LocIndexer(self)
         # Haven't decided if the below would actually be useful
@@ -186,6 +198,11 @@ class Table:
                          index=self.columns)
 
     @property
+    def id(self):
+        """ID of the table."""
+        return self.meta['_id']
+
+    @property
     def shape(self):
         """Shape of table."""
         n_rows = self.query('SELECT COUNT(*)',
@@ -198,17 +215,17 @@ class Table:
 
         Parameters
         ----------
-        df :        pandas.DataFrame
-                    DataFrame to export to SeaTable. Datatypes are inferred:
-                      - `object` -> text
-                      - int, float -> number
-                      - bool: -> check box
-        name_name : str
-                    Name of the new table.
-        base :      str | int
-                    Name or ID of base.
-        id_col :    str | int
-                    Name or index of the ID column to use.
+        df :            pandas.DataFrame
+                        DataFrame to export to SeaTable. Datatypes are inferred:
+                          - `object` -> text
+                          - int, float -> number
+                          - bool: -> check box
+        table_name :    str
+                        Name of the new table.
+        base :          str | int
+                        Name or ID of base.
+        id_col :        str | int
+                        Name or index of the ID column to use.
 
         Returns
         -------
@@ -265,24 +282,24 @@ class Table:
 
         Parameters
         ----------
-        name_name : str
-                    Name of the new table.
-        base :      str | int
-                    Name or ID of base.
-        columns :   list, optional
-                    If provided, must be a list of dicts:
+        table_name :    str
+                        Name of the new table.
+        base :          str | int
+                        Name or ID of base.
+        columns :       list, optional
+                        If provided, must be a list of dicts:
 
-                    [{'column_name': 'First column',
-                      'column_type': 'number',
-                      'column_data': None}]
+                        [{'column_name': 'First column',
+                          'column_type': 'number',
+                          'column_data': None}]
 
-                    If not provided, the table will be initialized with a single
-                    "Name" column.
+                        If not provided, the table will be initialized with a
+                        single "Name" column.
 
         Returns
         -------
         Table
-                    Will be initialized with `read_only=False`.
+                        Will be initialized with `read_only=False`.
 
         """
         # Find the base
@@ -309,7 +326,7 @@ class Table:
             raise KeyError(f'"{miss}" not among columns')
 
     @write_access
-    def add_column(self, col_name, col_type, data=None):
+    def add_column(self, col_name, col_type, col_data=None):
         """Add new column to table.
 
         Parameters
@@ -324,6 +341,9 @@ class Table:
                       - `str` for "text"
                       - "long_text" for "longtext"
                       - "link" for "link"
+        col_data :  dict, optional
+                    Config info of column. Required for link-type columns,
+                    optional for other type columns.
 
         """
         # Make sure meta data is up-to-date
@@ -336,7 +356,8 @@ class Table:
 
         resp = self.base.insert_column(table_name=self.name,
                                        column_name=col_name,
-                                       column_type=col_type)
+                                       column_type=col_type,
+                                       column_data=col_data)
 
         # Make sure meta is updated before next use
         self._stale = True
@@ -345,6 +366,69 @@ class Table:
             raise ValueError(f'Error writing to table: {resp}')
         logger.info(f'Column "{col_name}" added.')
 
+    @write_access
+    def add_linked_column(self, col_name, link_col, link_on, formula='lookup'):
+        """Add linked column to table.
+
+        Parameters
+        ----------
+        col_name :  str
+                    Name of the new column.
+        link_col :  str
+                    Column containing the links to other table.
+        link_on :   str
+                    Column in other table to link on.
+        formula :   str
+                    Formula to use for pulling data from other table:
+                      - "lookup" returns values of the linked record(s)
+                      - "countlinks" counts number of linked records
+                      - "rollup-average": average across linked records
+                      - "rollup-max": maximum across linked records
+                      - "rollup-min": minimum across linked records
+                      - "rollup-sum": sum across linked records
+                      - "rollup-concatenate": concatenate across linked records
+
+        See Also
+        --------
+        Table.link
+                    For creating links between two tables.
+
+        """
+        ALLOWED_FORMULAS = ('lookup', 'countlinks', 'rollup-avg', 'rollup-max',
+                            'rollup-min', 'rollup-sum', 'rollup-conc')
+        if formula not in ALLOWED_FORMULAS:
+            raise ValueError(f'Unrecognized formula "{formula}"')
+
+        # Make sure meta data is up-to-date
+        self.fetch_meta()
+
+        if col_name in self.columns:
+            raise ValueError(f'Column "{col_name}" already exists.')
+
+        if link_col not in self.columns:
+            raise ValueError(f'Link column "{link_col}" does not exist.')
+        elif self[link_col].dtype != 'link':
+            raise TypeError(f'Link column must be type "link", not "{self[link_col].dtype}"')
+
+        # Prepare column data
+        col_data = {}
+        col_data['formula'] = formula.split('-')[0]
+        col_data['link_column'] = link_col
+        col_data['level1_linked_column'] = link_on
+        if formula.startswith('rollup'):
+            col_data['summary_method'] = formula.split('-')[1]
+
+        _ = self.base.insert_column(table_name=self.name,
+                                    column_name=col_name,
+                                    column_type=ColumnTypes.LINK_FORMULA,
+                                    column_data=col_data)
+
+        # Make sure meta is updated before next use
+        self._stale = True
+
+        logger.info(f'Linked column "{col_name}" added.')
+
+    @write_access
     def append(self, other):
         """Append rows of `other` to the end of this table.
 
@@ -384,7 +468,7 @@ class Table:
         """Fetch/update meta data for table and base."""
         self.base_meta = self.base.get_metadata()
 
-        meta = [t for t in self.base_meta['tables'] if t['name'] == self.name]
+        meta = [t for t in self.base_meta['tables'] if t['name'] == self.name or t['_id'] == self.name]
 
         if len(meta) == 0:
             raise ValueError(f'No table with name "{self.name}" in base')
@@ -399,6 +483,102 @@ class Table:
         """Return top N rows as pandas DataFrame."""
         data = self.base.query(f'SELECT * FROM {self.name} LIMIT {n}')
         return process_records(data, columns=self.columns)
+
+    @write_access
+    def link(self, other_table, link_on=None, link_on_other=None,
+             link_col=None, multi_match=True):
+        """Link rows in this table to rows in other table.
+
+        Parameters
+        ----------
+        other_table :   str
+                        Name of other table (must be in the same base).
+        link_on :       str, optional
+                        Column in this table that we will link on. If ``None``
+                        will use the index column.
+        link_on_other : str, optional
+                        Column in other table to link on. If ``None`` will use
+                        the index column.
+        link_col :      str, optional
+                        Column used for storing the links. Will be created if it
+                        doesn't exist and overwritten if it does. If ``None``,
+                        will use `link_{other_table}` as name.
+        multi_match :   bool
+                        Whether to allow matching a row in this table to multiple
+                        rows in other table. If False, will pick the first row
+                        that matches and ignore any other matches.
+
+        See Also
+        --------
+        Table.add_linked_column
+                        For a column utilizing the links to pull records from
+                        other table.
+
+        """
+        other = Table(other_table, base=self.base)
+
+        if link_on_other and link_on_other not in other.columns:
+            raise ValueError(f'Column to link on "{link_on_other}" does not '
+                             'exist in other table.')
+        elif not link_on_other:
+            link_on_other = other.columns[0]
+
+        if link_on and link_on not in self.columns:
+            raise ValueError(f'Column to link on "{link_on}" does not exist in table.')
+        elif not link_on:
+            link_on = self.columns[0]
+
+        if not link_col:
+            link_col = f'link_{other_table}'
+
+        # Get the data we need to merge on
+        link_data = self[link_on].to_series()
+        link_data_other = other[link_on_other].to_series()
+
+        # Turn other into a dict of {value: [row_id1, row_id2, ...]}
+        link_dict_other = link_data_other.reset_index(drop=False).groupby(link_data_other.name).row_id.apply(list).to_dict()
+
+        other_rows_ids_map = {}
+        for row_id, value in zip(link_data.index.values, link_data.values):
+            if value in link_dict_other:
+                other_rows_ids_map[row_id] = link_dict_other[value]
+
+        if not multi_match:
+            other_rows_ids_map = {k: v[:1] for k, v in other_rows_ids_map.items()}
+
+        # Delete column if it already exists:
+        # much easier to delete & recreate than to modify in place
+        if link_col in self.columns:
+            lvl = logger.lvl
+            try:
+                logger.setLevel('WARNING')
+                self[link_col].delete()
+            except BaseException:
+                raise
+            finally:
+                logger.setLevel(lvl)
+
+        self.add_column(col_name=link_col, col_type='link',
+                        col_data={'table': self.name,
+                                  'other_table': other_table,
+                                  'is_multiple': False})
+
+        link_id = self[link_col].meta['data']['link_id']
+        table_id = self.id
+        other_table_id = other.id
+        row_id_list = list(other_rows_ids_map.keys())
+
+        for i in trange(0, len(row_id_list), self.max_operations,
+                        disable=len(row_id_list) < self.max_operations,
+                        desc='Linking'):
+            batch_row_id_list = row_id_list[i: i + self.max_operations]
+            batch_other_rows_ids_map = {k: v for k, v in other_rows_ids_map.items() if k in batch_row_id_list}
+
+            self.base.batch_update_links(link_id,
+                                         table_id,
+                                         other_table_id,
+                                         batch_row_id_list,
+                                         batch_other_rows_ids_map)
 
     def to_frame(self, row_id_index=True):
         """Download entire table as pandas DataFrame."""
