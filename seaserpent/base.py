@@ -763,6 +763,8 @@ class Column:
                                              self.key,
                                              new_name)
 
+        self.table._stale = True
+
         if not resp.get('success'):
             raise ValueError(f'Error writing to table: {resp}')
         logger.info('Column renamed.')
