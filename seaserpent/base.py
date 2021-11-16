@@ -455,7 +455,7 @@ class Table:
         if not other.shape[1]:
             raise ValueError('None of the columns in `other` are in table')
 
-        records = other.to_dict(orient='records')
+        records = make_records(other)
 
         r = batch_upload(partial(self.base.batch_append_rows, self.name),
                          records, desc='Appending',
