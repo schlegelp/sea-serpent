@@ -132,7 +132,7 @@ class Table:
 
         query = create_query(self, columns=columns, where=None, limit=None)
         records = self.query(query, no_limit=True)
-        return process_records(records, columns=columns)
+        return process_records(records, columns=columns, dtypes=self.dtypes.to_dict())
 
     @write_access
     def __setitem__(self, key, values):
@@ -482,7 +482,7 @@ class Table:
     def head(self, n=5):
         """Return top N rows as pandas DataFrame."""
         data = self.base.query(f'SELECT * FROM {self.name} LIMIT {n}')
-        return process_records(data, columns=self.columns)
+        return process_records(data, columns=self.columns, dtypes=self.dtypes.to_dict())
 
     @write_access
     def link(self, other_table, link_on=None, link_on_other=None,
@@ -585,7 +585,8 @@ class Table:
         data = self.base.query(f'SELECT * FROM {self.name} LIMIT {self.shape[0]}')
         return process_records(data,
                                columns=self.columns,
-                               row_id_index=row_id_index)
+                               row_id_index=row_id_index,
+                               dtypes=self.dtypes.to_dict())
 
     def query(self, query, no_limit=False):
         """Run SQL query against this table.
@@ -696,7 +697,9 @@ class Column:
     def to_series(self):
         """Return this column as pandas.Series."""
         rows = self.table.query(f'SELECT {self.name}', no_limit=True)
-        return process_records(rows, row_id_index=self.name != '_id').iloc[:, 0]
+        return process_records(rows,
+                               row_id_index=self.name != '_id',
+                               dtypes={self.name: self.dtype}).iloc[:, 0]
 
     def clear(self):
         """Clear this column."""
@@ -772,11 +775,12 @@ class Column:
     def unique(self):
         """Return unique values in this column."""
         rows = self.table.query(f'SELECT DISTINCT {self.name}', no_limit=True)
-        return process_records(rows).iloc[:, 0].values
+        return process_records(rows, dtypes=self.dtype).iloc[:, 0].values
 
 
 class Filter:
     """Class representing an SQL WHERE query."""
+
     def __init__(self, query):
         self.query = query
 

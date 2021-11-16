@@ -46,7 +46,7 @@ def map_columntype(x):
     raise ValueError(f'Unknown column type "{x}". Try one of the following:\n {type_str}')
 
 
-def process_records(records, columns=None, row_id_index=True):
+def process_records(records, columns=None, row_id_index=True, dtypes=None):
     """Turn records into pandas DataFrame.
 
     Parameters
@@ -59,6 +59,9 @@ def process_records(records, columns=None, row_id_index=True):
     row_id_index :  bool
                     Whether to use row IDs as index. If False, will drop
                     `_row_id` column.
+    dtypes :        dict, optional
+                    Optional SeaTable data types as strings. If provides, will
+                    perform some clean-up operations.
 
     Returns
     -------
@@ -78,6 +81,24 @@ def process_records(records, columns=None, row_id_index=True):
 
     if not isinstance(columns, type(None)):
         df = df[columns]
+
+    # Try some clean-up operations
+    if isinstance(dtypes, dict):
+        for c, dt in dtypes.items():
+            # Skip non-existing columns
+            if c not in df:
+                continue
+
+            if dt == 'checkbox':
+                df[c] = df[c].astype(bool, copy=False, errors='ignore')
+            elif dt == 'number':
+                # Manually cleared cells will unfortunately return an empty
+                # str ('') as value instead of just no value at all...
+                if df[c].dtype == 'O':
+                    # Set empty strings to None
+                    df.loc[df[c] == '', c] = None
+                    # Try to convert to float
+                    df[c] = df[c].astype(float, copy=False, errors='ignore')
 
     return df
 
