@@ -252,11 +252,11 @@ class Table:
         df = validate_table(df)
 
         if df[id_col].dtype == object:
-            id_col_dtype = str
+            id_col_dtype = 'text'
         else:
-            id_col_dtype = map_columntype(df[id_col].dtype.kind)
+            id_col_dtype = map_columntype(df[id_col].dtype.kind).name.lower()
         columns = [{'column_name': id_col,
-                    'column_type': id_col_dtype.name.lower()}]
+                    'column_type': id_col_dtype}]
 
         table = cls.new(table_name=table_name, base=base, columns=columns,
                         auth_token=auth_token, server=server)
