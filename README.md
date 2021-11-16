@@ -4,8 +4,10 @@ A dataframe-like wrapper around the [SeaTable](https://seatable.io/en/) API.
 This library tries to make interacting with SeaTables as if you were working
 with a local pandas DataFrame.
 
-Fair warning: `sea-serpent` is at an early stage and the interface might still
-change somewhat.
+Some notes:
+- This library is at an early stage and the interface might still change somewhat.
+- For convenience and ease of access we're using names to identify tables,
+  columns and bases. Hence you should avoid duplicate names if at all possible.
 
 ## Install
 
@@ -155,8 +157,8 @@ Create links:
 Create column that pulls data from linked table:
 
 ```python
->>> table.add_linked_column(col_name='LinkedData',
-...                         link_col='OtherTableLinks',
-...                         link_on='some_value',
-...                         formula='lookup')
+>>> table.add_linked_column(col_name='LinkedData',      # name of new column
+...                         link_col='OtherTableLinks', # column with link(s) to other table
+...                         link_on='some_value',       # which column in other table to link to 
+...                         formula='lookup')           # how to aggregate data (lookup, mean, max, etc)
 ```
