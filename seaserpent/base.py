@@ -842,7 +842,13 @@ class LocIndexer:
 
         query = create_query(self.table, columns=cols, where=where, limit=limit)
         records = self.table.query(query, no_limit=True)
-        return process_records(records)
+        data = process_records(records, dtypes=self.table.dtypes.to_dict())
+
+        # If a single row was requested
+        if isinstance(key, int):
+            data = data.iloc[0]
+
+        return data
 
     @write_access
     def __setitem__(self, key, values):
@@ -974,6 +980,8 @@ def create_query(table, columns=None, where=None, limit=None):
                 q += f' LIMIT {start}, {table.shape[0] - start}'
             elif stop:
                 q += f' LIMIT {stop}'
+        elif isinstance(where, int):
+            q += f' LIMIT {where}, 1'
         else:
             raise TypeError(f'Unable to construct WHERE query from "{type(where)}"')
 
