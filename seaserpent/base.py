@@ -11,9 +11,11 @@ from seatable_api.main import SeaTableAPI
 from seatable_api.constants import ColumnTypes
 from tqdm.auto import trange
 
-from .utils import (process_records, validate_comparison, is_iterable,
-                    make_iterable, map_columntype, find_base, write_access,
-                    validate_dtype, is_hashable)
+from .utils import (process_records, make_records,
+                    is_iterable, make_iterable, is_hashable,
+                    map_columntype, find_base, write_access,
+                    validate_dtype, validate_comparison, validate_table,
+                    validate_values)
 
 logger = logging.getLogger(__name__)
 logger.setLevel('INFO')
@@ -156,6 +158,9 @@ class Table:
         # Validate datatype
         validate_dtype(self, key, values)
 
+        # This checks for potential int64 -> int32 issues
+        values = validate_values(values)
+
         # Fetch the IDs
         row_ids = self.query('SELECT _id', no_limit=True)
 
@@ -242,6 +247,9 @@ class Table:
 
         if id_col not in df.columns:
             raise ValueError(f'ID column "{id_col}" not among columns.')
+
+        # Validate table
+        df = validate_table(df)
 
         if df[id_col].dtype == object:
             id_col_dtype = str
@@ -877,6 +885,9 @@ class LocIndexer:
 
         # Validate datatype
         validate_dtype(self.table, col, values)
+
+        # This checks for potential int64 -> int32 issues
+        values = validate_values(values)
 
         records = [{'row_id': r,
                     'row': {col: v}} for r, v in zip(row_ids, values)]

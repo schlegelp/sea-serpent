@@ -159,6 +159,17 @@ Create column that pulls data from linked table:
 ```python
 >>> table.add_linked_column(col_name='LinkedData',      # name of new column
 ...                         link_col='OtherTableLinks', # column with link(s) to other table
-...                         link_on='some_value',       # which column in other table to link to 
+...                         link_on='some_value',       # which column in other table to link to
 ...                         formula='lookup')           # how to aggregate data (lookup, mean, max, etc)
 ```
+
+## Known limitations & oddities
+
+1. 64 bit integers are truncated when writing to a table. I suspect this happens
+   on the server side when decoding the JSON payload because manually entering
+   large numbers through the web interface works perfectly well. Hence,
+   seaserpent safely (and quietly) downcasts 64 bit integers to 32 bit or
+   failing that converts them to floats before uploading.
+2. The web interface appears to only show floats up to the 8th decimal. In the
+   database the precision must be higher though because I have successfully
+   written 1e-128 floats.

@@ -9,6 +9,7 @@ import pandas as pd
 from seatable_api import Account
 from seatable_api.constants import ColumnTypes
 
+
 COLUMN_TYPES = {
     (int, float, 'i', 'u', 'int', 'f', 'float', 'number'): ColumnTypes.NUMBER,  # number
     (str, 'S', 'str', 'text'): ColumnTypes.TEXT,                                # text
@@ -298,3 +299,66 @@ def validate_dtype(table, column, values):
 
         if not ok:
             raise TypeError(f'Trying to write {type(v)} to "{dtype}" column.')
+
+
+def validate_table(table):
+    """Make sure table can be uploaded.
+
+    In particular, we're making sure that 64bit integers are either safely
+    converted to 32bit or, failing that, turned into floats.
+    """
+    # Avoid unnecessary copies
+    is_copy = False
+    # For each column check...
+    for col in table.columns:
+        # ... if it's 64 bit integers
+        if table.dtypes[col] == np.int64:
+            # Make copy if not already happened
+            if not is_copy:
+                table = table.copy()
+                is_copy = False
+            # If too large/small for 32 bits
+            if table.dtypes[col].max() > 2_147_483_647 or table.dtypes[col].min() < -2_147_483_648:
+                table[col] = table[col].astype(float)
+            else:
+                table[col] = table[col].astype(np.int32)
+
+    return table
+
+
+def validate_values(values):
+    """Similar to validate_table but for a 1d array."""
+    # Note that any list of numeric, non-decimal values will automatically
+    # get the np.int64 datatype -> hence we won't warn if we safely downcast
+    values = np.asarray(values)
+    if values.dtype == np.int64:
+        # If too large/small for 32 bits
+        if values.max() > 2_147_483_647 or values.min() < -2_147_483_648:
+            values = values.astype(float)
+        else:
+            values = values.astype(np.int32)
+
+    return values.tolist()
+
+
+def make_records(table):
+    """Create clean records from given table.
+
+    In brief:
+      - create records
+      - drop any `null`, `None` or `NaNs`
+
+    Parameters
+    ----------
+    table :     pd.DataFrame
+
+    Returns
+    -------
+    records :   list of dicts
+
+    """
+    records = table.to_dict(orient='records')
+
+    records = [{k: v for k, v in r.items() if not pd.isnull(v)} for r in records]
+
+    return records
