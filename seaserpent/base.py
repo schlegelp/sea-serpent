@@ -118,6 +118,9 @@ class Table:
         return Column(name=name, table=self)
 
     def __getitem__(self, key):
+        if isinstance(key, Filter):
+            return self.loc[key]
+
         # If single string assume this is a column and return the promise
         if is_hashable(key):
             if key not in self.columns and key not in ('_id', ):
