@@ -224,6 +224,11 @@ class Table:
                             no_limit=False)[0].get('COUNT(*)', 'NA')
         return (n_rows, len(self.columns))
 
+    @property
+    def values(self):
+        """Values."""
+        return self.to_frame().values
+
     @classmethod
     def from_frame(cls, df, table_name, base, id_col=0, auth_token=None, server=None):
         """Create a new table from pandas DataFrame.
