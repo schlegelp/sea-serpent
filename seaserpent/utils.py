@@ -296,6 +296,10 @@ def validate_dtype(table, column, values):
     dtype = table.dtypes[column]
 
     for v in values:
+        # `None`/`NaN` effectively leads to removal of the value
+        if pd.isnull(v):
+            continue
+
         ok = True
         if dtype in ('text', 'long text'):
             if not isinstance(v, str):

@@ -170,7 +170,7 @@ class Table:
         row_ids = self.query('SELECT _id', no_limit=True)
 
         records = [{'row_id': r['_id'],
-                    'row': {key: v}} for r, v in zip(row_ids, values)]
+                    'row': {key: v if not pd.isnull(v) else None}} for r, v in zip(row_ids, values)]
 
         r = batch_upload(partial(self.base.batch_update_rows, self.name),
                          records, batch_size=self.max_operations)
@@ -930,7 +930,7 @@ class LocIndexer:
         values = validate_values(values)
 
         records = [{'row_id': r,
-                    'row': {col: v}} for r, v in zip(row_ids, values)]
+                    'row': {col: v if not pd.isnull(v) else None}} for r, v in zip(row_ids, values)]
 
         r = batch_upload(partial(self.table.base.batch_update_rows,
                                  self.table.name),
