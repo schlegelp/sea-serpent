@@ -736,6 +736,7 @@ class Column:
                                row_id_index=self.name != '_id',
                                dtypes={self.name: self.dtype}).iloc[:, 0]
 
+    @write_access
     def clear(self):
         """Clear this column."""
         if not self.key:
@@ -753,6 +754,7 @@ class Column:
         if 'success' in r:
             logger.info('Clear successful!')
 
+    @write_access
     def delete(self):
         """Delete this column."""
         if not self.key:
@@ -780,6 +782,7 @@ class Column:
 
         return Filter(f"{self.name} IN {str(other)}")
 
+    @write_access
     def rename(self, new_name):
         """Rename column.
 
@@ -803,9 +806,12 @@ class Column:
 
         self.table._stale = True
 
-        if not resp.get('success'):
+        if 'name' not in resp:
             raise ValueError(f'Error writing to table: {resp}')
-        logger.info('Column renamed.')
+
+        logger.info(f'Column renamed: {self.name} -> {self.new_name}')
+
+        self.name = new_name
 
     def unique(self):
         """Return unique values in this column."""

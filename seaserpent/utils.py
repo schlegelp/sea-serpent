@@ -277,7 +277,13 @@ def write_access(func):
     @functools.wraps(func)
     def inner(*args, **kwargs):
         self = args[0]
-        if self.read_only:
+
+        if 'Column' in str(type(self)):
+            table = self.table
+        else:
+            table = self
+
+        if table.read_only:
             raise ValueError('Table is read-only to prevent accidental edits. '
                              'Please initialize with `read_only=False` to allow '
                              'writing to it.')
