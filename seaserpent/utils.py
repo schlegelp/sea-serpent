@@ -16,7 +16,8 @@ COLUMN_TYPES = {
     ('long text', ): ColumnTypes.LONG_TEXT,                                     # long text
     (bool, 'b', 'bool', 'checkbox'): ColumnTypes.CHECKBOX,                      # checkbox
     ('date', ): ColumnTypes.DATE,                                               # date & time
-    ('select', 'single_select'): ColumnTypes.SINGLE_SELECT,                     # single select
+    ('select', 'single_select',
+     pd.CategoricalDtype): ColumnTypes.SINGLE_SELECT,                           # single select
     ('multiple_select', ): ColumnTypes.MULTIPLE_SELECT,                         # multiple select
     ('image', ): ColumnTypes.IMAGE,                                             # image
     ('file', ): ColumnTypes.FILE,                                               # file

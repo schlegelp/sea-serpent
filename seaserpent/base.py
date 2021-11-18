@@ -222,9 +222,10 @@ class Table:
         ----------
         df :            pandas.DataFrame
                         DataFrame to export to SeaTable. Datatypes are inferred:
-                          - `object` -> text
+                          - object -> text
                           - int, float -> number
-                          - bool: -> check box
+                          - bool -> check box
+                          - categorical -> single select
         table_name :    str
                         Name of the new table.
         base :          str | int
@@ -235,7 +236,7 @@ class Table:
         Returns
         -------
         Table
-                    Will be initialized with `read_only=False`.
+                        Will be initialized with `read_only=False`.
 
         """
         # Some sanity checks
@@ -272,10 +273,22 @@ class Table:
 
             if col.dtype == object:
                 dtype = str
+            elif isinstance(col.dtype, pd.CategoricalDtype):
+                dtype = 'single_select'
             else:
                 dtype = col.dtype.kind
 
-            table.add_column(col_name=c, col_type=dtype)
+            if dtype == 'single_select':
+                options = [{
+                            'name': str(o),
+                            'color': '#aaa',
+                            'textColor': '#000000'
+                            } for o in col.dtype.categories]
+            else:
+                options = None
+
+            table.add_column(col_name=c, col_type=dtype, col_options=options)
+
         logger.info('New columns added.')
 
         # Add the actual data
@@ -334,7 +347,7 @@ class Table:
             raise KeyError(f'"{miss}" not among columns')
 
     @write_access
-    def add_column(self, col_name, col_type, col_data=None):
+    def add_column(self, col_name, col_type, col_data=None, col_options=None):
         """Add new column to table.
 
         Parameters
@@ -352,6 +365,11 @@ class Table:
         col_data :  dict, optional
                     Config info of column. Required for link-type columns,
                     optional for other type columns.
+        col_options : records, optional
+                    Column options for single and multiple select columns.
+                    Format must be something like:
+
+                     [{"name": "ddd", "color": "#aaa", "textColor": "#000000"}]
 
         """
         # Make sure meta data is up-to-date
@@ -366,6 +384,10 @@ class Table:
                                        column_name=col_name,
                                        column_type=col_type,
                                        column_data=col_data)
+
+        if col_options and col_type in (ColumnTypes.SINGLE_SELECT,
+                                        ColumnTypes.MULTIPLE_SELECT):
+            self.base.add_column_options(self.name, col_name, col_options)
 
         # Make sure meta is updated before next use
         self._stale = True
