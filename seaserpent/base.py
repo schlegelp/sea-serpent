@@ -197,6 +197,11 @@ class Table:
         return np.array([c['name'] for c in self.meta['columns']])
 
     @property
+    def row_ids(self):
+        """Row IDs."""
+        return self['_id'].values
+
+    @property
     def dtypes(self):
         """Column data types."""
         return pd.Series([c['type'] for c in self.meta['columns']],
