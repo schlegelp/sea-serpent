@@ -836,7 +836,7 @@ class Filter:
         return self.__str__()
 
     def __str__(self):
-        return f'SQL query <"{self.query}">'
+        return f'SQL filter query <"{self.query}">'
 
     def __neg__(self):
         if self.query.startswith('NOT'):
@@ -932,7 +932,8 @@ class LocIndexer:
         records = [{'row_id': r,
                     'row': {col: v}} for r, v in zip(row_ids, values)]
 
-        r = batch_upload(partial(self.table.base.batch_update_rows, self.name),
+        r = batch_upload(partial(self.table.base.batch_update_rows,
+                                 self.table.name),
                          records, batch_size=self.table.max_operations)
 
         if 'success' in r:
