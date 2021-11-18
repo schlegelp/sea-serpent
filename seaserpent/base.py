@@ -121,7 +121,9 @@ class Table:
         # If single string assume this is a column and return the promise
         if is_hashable(key):
             if key not in self.columns and key not in ('_id', ):
-                raise AttributeError(f'Table has no "{key}" column')
+                self.fetch_meta()
+                if key not in self.columns:
+                    raise AttributeError(f'Table has no "{key}" column')
             return Column(name=key, table=self)
 
         if isinstance(key, slice):
