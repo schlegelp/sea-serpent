@@ -538,8 +538,8 @@ class Table:
                         the index column.
         link_col :      str, optional
                         Column used for storing the links. Will be created if it
-                        doesn't exist and overwritten if it does. If ``None``,
-                        will use `link_{other_table}` as name.
+                        doesn't exist and updated if it does. If ``None``,
+                        will use `link_{other_table}` as name!
         multi_match :   bool
                         Whether to allow matching a row in this table to multiple
                         rows in other table. If False, will pick the first row
@@ -575,36 +575,33 @@ class Table:
         # Turn other into a dict of {value: [row_id1, row_id2, ...]}
         link_dict_other = link_data_other.reset_index(drop=False).groupby(link_data_other.name).row_id.apply(list).to_dict()
 
+        # Map row IDs in this DataFrame to those in others
+        # {row_id: [other_row_id1, other_row_id2], ...}
         other_rows_ids_map = {}
         for row_id, value in zip(link_data.index.values, link_data.values):
             if value in link_dict_other:
                 other_rows_ids_map[row_id] = link_dict_other[value]
 
+        # If no multimatch allowed, drop anything but the first match
         if not multi_match:
             other_rows_ids_map = {k: v[:1] for k, v in other_rows_ids_map.items()}
 
-        # Delete column if it already exists:
-        # much easier to delete & recreate than to modify in place
-        if link_col in self.columns:
-            lvl = logger.level
-            try:
-                logger.setLevel('WARNING')
-                self[link_col].delete()
-            except BaseException:
-                raise
-            finally:
-                logger.setLevel(lvl)
+        # Add link column if doesn't already exists:
+        if link_col not in self.columns:
+            self.add_column(col_name=link_col, col_type='link',
+                            col_data={'table': self.name,
+                                      'other_table': other_table,
+                                      'is_multiple': False})
 
-        self.add_column(col_name=link_col, col_type='link',
-                        col_data={'table': self.name,
-                                  'other_table': other_table,
-                                  'is_multiple': False})
+        # Add obsolete links that need to be removed (= set them to [])
+        other_rows_ids_map.update({k: [] for k in link_data.index.values if k not in other_rows_ids_map})
 
         link_id = self[link_col].meta['data']['link_id']
         table_id = self.id
         other_table_id = other.id
         row_id_list = list(other_rows_ids_map.keys())
 
+        # Update links in batches
         for i in trange(0, len(row_id_list), self.max_operations,
                         disable=len(row_id_list) < self.max_operations,
                         desc='Linking'):
