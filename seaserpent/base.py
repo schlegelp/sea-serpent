@@ -411,12 +411,12 @@ class Table:
         formula :   str
                     Formula to use for pulling data from other table:
                       - "lookup" returns values of the linked record(s)
-                      - "countlinks" counts number of linked records
+                      - "count_links" counts number of linked records
                       - "rollup-average": average across linked records
-                      - "rollup-max": maximum across linked records
-                      - "rollup-min": minimum across linked records
                       - "rollup-sum": sum across linked records
                       - "rollup-concatenate": concatenate across linked records
+                      - "findmax": maximum across linked records
+                      - "findmin": minimum across linked records
 
         See Also
         --------
@@ -424,8 +424,8 @@ class Table:
                     For creating links between two tables.
 
         """
-        ALLOWED_FORMULAS = ('lookup', 'countlinks', 'rollup-avg', 'rollup-max',
-                            'rollup-min', 'rollup-sum', 'rollup-conc')
+        ALLOWED_FORMULAS = ('lookup', 'count_links', 'rollup-avg', 'findmax',
+                            'findmin', 'rollup-sum', 'rollup-conc')
         if formula not in ALLOWED_FORMULAS:
             raise ValueError(f'Unrecognized formula "{formula}"')
 
@@ -579,7 +579,7 @@ class Table:
         # Delete column if it already exists:
         # much easier to delete & recreate than to modify in place
         if link_col in self.columns:
-            lvl = logger.lvl
+            lvl = logger.level
             try:
                 logger.setLevel('WARNING')
                 self[link_col].delete()
