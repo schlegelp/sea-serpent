@@ -319,7 +319,7 @@ def validate_table(table):
                 table = table.copy()
                 is_copy = False
             # If too large/small for 32 bits
-            if table.dtypes[col].max() > 2_147_483_647 or table.dtypes[col].min() < -2_147_483_648:
+            if table[col].max() > 2_147_483_647 or table[col].min() < -2_147_483_648:
                 table[col] = table[col].astype(float)
             else:
                 table[col] = table[col].astype(np.int32)
