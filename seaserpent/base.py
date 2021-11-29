@@ -114,7 +114,12 @@ class Table:
 
     def __getattr__(self, name):
         if name not in self.columns:
-            raise AttributeError(f'Table has no "{name}" column')
+            # Update meta data
+            _ = self.fetch_meta()
+
+            # If name still not in columns
+            if name not in self.columns:
+                raise AttributeError(f'Table has no "{name}" column')
         return Column(name=name, table=self)
 
     def __getitem__(self, key):
@@ -146,6 +151,9 @@ class Table:
         if not is_hashable(key):
             raise KeyError('Key must be hashable (i.e. a single column). Use '
                            '.loc indexer to set values for a specific slice.')
+
+        # Update meta data for self
+        _ = self.fetch_meta()
 
         if key not in self.columns:
             raise KeyError('Column must exists, use `add_column()` method to '
@@ -567,6 +575,9 @@ class Table:
                              'exist in other table.')
         elif not link_on_other:
             link_on_other = other.columns[0]
+
+        # Update meta data for self
+        _ = self.fetch_meta()
 
         if link_on and link_on not in self.columns:
             raise ValueError(f'Column to link on "{link_on}" does not exist in table.')
