@@ -417,7 +417,7 @@ class Table:
 
         if not resp.get('name'):
             raise ValueError(f'Error writing to table: {resp}')
-        logger.info(f'Column "{col_name}" added.')
+        logger.info(f'Column "{col_name}" ({col_type}) added.')
 
     @write_access
     def add_linked_column(self, col_name, link_col, link_on, formula='lookup'):
