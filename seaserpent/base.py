@@ -747,6 +747,10 @@ class Column:
     def values(self):
         return self.to_series().values
 
+    def isnull(self):
+        """Test if values are null."""
+        return self.to_series().isnull()
+
     def to_series(self):
         """Return this column as pandas.Series."""
         rows = self.table.query(f'SELECT {self.name}', no_limit=True)
