@@ -927,7 +927,16 @@ class LocIndexer:
             raise KeyError('Column must exists, use `add_column()` method to '
                            f'create "{col}" before setting its values')
 
-        row_ids = self[where, '_id'].index
+        if isinstance(where, pd.Series):
+            where = where.values
+
+        if is_iterable(where):
+            where = np.asarray(where)
+            if where.dtype != bool:
+                raise KeyError('Unable to index by non-boolean iterable')
+            row_ids = self.table.row_ids[where]
+        else:
+            row_ids = self[where, '_id'].index
 
         if isinstance(values, (pd.Series, Column)):
             values = values.values
