@@ -685,6 +685,10 @@ class Column:
     def __str__(self):
         return f'Column <column={self.name}, table="{self.table.name}", datatype={self.dtype}>'
 
+    def __len__(self):
+        """Number of rows in column."""
+        return len(self.table)
+
     def __eq__(self, other):
         _ = validate_comparison(self, other)
         if isinstance(other, str):
@@ -839,6 +843,30 @@ class Column:
         """Return unique values in this column."""
         rows = self.table.query(f'SELECT DISTINCT {self.name}', no_limit=True)
         return process_records(rows, dtypes=self.dtype).iloc[:, 0].values
+
+    def update(self, values):
+        """Update this column with given values.
+
+        The main difference between this and simply setting them is that here
+        we make sure to only write values that have changed back to the table.
+
+        Parameters
+        ----------
+        values :    iterable
+                    Must be of same length and data type as the column.
+
+        """
+        values = np.asarray(values)
+
+        l = len(self)
+        if len(values) != l:
+            raise ValueError(f'Length of values ({len(values)}) does not '
+                             f'match length of column ({l})')
+
+        needs_update = self.values != values
+
+        if any(needs_update):
+            self.table.loc[needs_update, self.name] = values[needs_update]
 
 
 class Filter:
