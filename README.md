@@ -124,6 +124,11 @@ Column <column="column1", table="LH_bodies", datatype=number>
 0         1          A     False
 1         2          B     False
 2         3          C      True
+>>> # To write only changed values to the table
+>>> # (more economic, better for logs)
+>>> values = table.checked.values 
+>>> values[0:2] = True  # Change only two values
+>>> table.checked.update(values)
 ```
 
 ### Deleting a column
