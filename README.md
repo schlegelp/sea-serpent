@@ -11,6 +11,14 @@ Some notes:
 
 ## Install
 
+From PyPI:
+
+```bash
+pip3 install sea-serpent
+```
+
+Bleeding edge from Github:
+
 ```bash
 pip3 install git+git://github.com/schlegelp/sea-serpent@main
 ```
