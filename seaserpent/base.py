@@ -174,7 +174,7 @@ class Table:
         validate_dtype(self, key, values)
 
         # This checks for potential int64 -> int32 issues
-        values = validate_values(values)
+        values = validate_values(values, dtype=self.dtypes[key])
 
         # Fetch the IDs
         row_ids = self.query('SELECT _id', no_limit=True)
@@ -1013,13 +1013,13 @@ class LocIndexer:
             values = [values] * len(self.table)
         elif len(values) != len(row_ids):
             raise ValueError(f'Length of values ({len(values)}) does not '
-                             f'match length of keys ({len(row_ids)})')
+                             f'match length of rows ({len(row_ids)})')
 
         # Validate datatype
         validate_dtype(self.table, col, values)
 
         # This checks for potential int64 -> int32 issues
-        values = validate_values(values)
+        values = validate_values(values, dtype=self.table.dtypes[col])
 
         records = [{'row_id': r,
                     'row': {col: v if not pd.isnull(v) else None}} for r, v in zip(row_ids, values)]

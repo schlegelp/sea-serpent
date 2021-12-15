@@ -4,6 +4,7 @@ import os
 import requests
 import sys
 
+import datetime as dt
 import numpy as np
 import pandas as pd
 
@@ -34,6 +35,11 @@ COLUMN_TYPES = {
     ('auto_number', ): ColumnTypes.AUTO_NUMBER,                                 # auto munber
     ('url', ): ColumnTypes.URL,                                                 # URL
 }
+
+NUMERIC_TYPES = (numbers.Number, int, float,
+                 np.int0, np.int8, np.int16, np.int32, np.int64, np.integer,
+                 np.uint, np.uint0, np.uint8, np.uint16, np.uint32, np.uint64,
+                 np.float16, np.float32, np.float64, np.float128, np.floating)
 
 
 def map_columntype(x):
@@ -102,6 +108,8 @@ def process_records(records, columns=None, row_id_index=True, dtypes=None):
                     df.loc[df[c] == '', c] = None
                     # Try to convert to float
                     df[c] = df[c].astype(float, copy=False, errors='ignore')
+            elif dt == 'date':
+                df[c] = pd.to_datetime(df[c])
 
     return df
 
@@ -319,6 +327,20 @@ def validate_dtype(table, column, values):
     """Assert that datatype of `values` matches that of `column`."""
     dtype = table.dtypes[column]
 
+    if isinstance(values, pd.DatetimeIndex):
+        values = values.values
+
+    # Some shortcuts if `values` is an array
+    if isinstance(values, np.ndarray):
+        # Shortcut for dates
+        if dtype == 'date' and values.dtype.type == np.datetime64:
+            return
+        elif dtype in ('number', ) and values.dtype.type in NUMERIC_TYPES:
+            return
+        elif dtype in ('text', 'long text') and values.dtype.kind == 'U':
+            return
+
+    # If list or unknown datattype, bite the bullet and check every value
     for v in values:
         # `None`/`NaN` effectively leads to removal of the value
         if pd.isnull(v):
@@ -330,6 +352,9 @@ def validate_dtype(table, column, values):
                 ok = False
         elif dtype in ('number', ):
             if not isinstance(v, numbers.Number):
+                ok = False
+        elif dtype == 'date':
+            if not isinstance(v, (numbers.Number, str, dt.datetime, np.datetime64)):
                 ok = False
 
         if not ok:
@@ -357,21 +382,74 @@ def validate_table(table):
                 table[col] = table[col].astype(float)
             else:
                 table[col] = table[col].astype(np.int32)
+        elif table.dtypes[col] in (float, np.float32, np.float64):
+            if any(np.isinf(table[col].values)):
+                raise ValueError(f'Column "{col}" contains non-finite values.')
 
     return table
 
 
-def validate_values(values):
+def validate_values(values, dtype=None):
     """Similar to validate_table but for a 1d array."""
     # Note that any list of numeric, non-decimal values will automatically
     # get the np.int64 datatype -> hence we won't warn if we safely downcast
-    values = np.asarray(values)
+
+    if isinstance(values, pd.DatetimeIndex):
+        values = values.values
+    else:
+        values = np.asarray(values)
+
     if values.dtype == np.int64:
         # If too large/small for 32 bits
         if values.max() > 2_147_483_647 or values.min() < -2_147_483_648:
             values = values.astype(float)
         else:
             values = values.astype(np.int32)
+    elif values.dtype in (float, np.float32, np.float64):
+        if any(np.isinf(values)):
+            raise ValueError('At least some values are non-finite.')
+
+    # Dates must be given as strings "YEAR-MONTH-DAY HOUR:MINUTE:SECONDS"
+    if dtype == 'date':
+        # If object type make sure each value is converted correctly
+        if values.dtype == 'O':
+            # Do not use np.isnan here!
+            not_nan = values != None
+
+            for i, v in enumerate(values):
+                # Skip empty rows
+                if v == None or v == np.nan:
+                    continue
+
+                if isinstance(v, str):
+                    # For strings we won't do any extra checking
+                    continue
+                elif isinstance(v, dt.date):
+                    values[i] = dt.date.strftime(v, '%Y-%m-%d %H:%M:%S')
+                elif isinstance(v, np.datetime64):
+                    values[i] = np.datetime_as_string(v, unit='m').replace('T', ' ')
+                else:
+                    raise TypeError('Dates must be given as string(s) (e.g. '
+                                    '"2021-10-01 10:10"), or as datetime or '
+                                    f'numpy.datetime64 objects. Got "{v}" '
+                                    f'({type(v)}).')
+        elif values.dtype.type in (np.datetime64, pd.Timestamp):
+            # We need strings formatted like this "2012-10-01 14:01"
+            # Note that we also need to cater for empty columns
+            is_date = ~np.isnan(values)
+            dates = values[is_date]
+            dates_str = np.datetime_as_string(dates, unit='m')
+            dates_str = [d.replace('T', ' ') for d in dates_str]
+
+            # Rewrite values
+            values = np.zeros(len(values), dtype='O')
+            values[is_date] = dates_str
+            values[~is_date] = None
+        # If non-string (i.e. numeric) array
+        elif values.dtype.kind != 'U':
+            raise TypeError('Dates must be given as string(s) (e.g. '
+                            '"2021-10-01 10:10"), or as datetime or '
+                            f'numpy.datetime64 objects. Got {values.dtype}.')
 
     return values.tolist()
 
