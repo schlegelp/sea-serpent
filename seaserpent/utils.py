@@ -2,6 +2,7 @@ import functools
 import numbers
 import os
 import requests
+import sys
 
 import numpy as np
 import pandas as pd
@@ -288,6 +289,29 @@ def write_access(func):
                              'Please initialize with `read_only=False` to allow '
                              'writing to it.')
         return func(*args, **kwargs)
+    return inner
+
+
+def suppress_print(func):
+    """Suppress any print statements during the function.
+
+    This is unfortunately necessary because seatable_python (in version 2.5.1
+    at least) has some bug in how dates are parsed and just prints an error
+    for every single row.
+    """
+
+    @functools.wraps(func)
+    def inner(*args, **kwargs):
+        # Set stdout to nothing
+        sys.stdout = open(os.devnull, 'w')
+        try:
+            res = func(*args, **kwargs)
+        except BaseException:
+            raise
+        finally:
+            sys.stdout = sys.__stdout__
+
+        return res
     return inner
 
 

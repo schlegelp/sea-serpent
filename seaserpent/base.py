@@ -15,7 +15,7 @@ from .utils import (process_records, make_records,
                     is_iterable, make_iterable, is_hashable,
                     map_columntype, find_base, write_access,
                     validate_dtype, validate_comparison, validate_table,
-                    validate_values)
+                    validate_values, suppress_print)
 
 logger = logging.getLogger(__name__)
 logger.setLevel('INFO')
@@ -103,6 +103,8 @@ class Table:
         # Maximum number of operations (e.g. edits) per batch
         self.max_operations = max_operations
         self.progress = progress
+
+        self.base.query = suppress_print(self.base.query)
 
     def __dir__(self):
         """Custom __dir__ to make columns searchable."""
