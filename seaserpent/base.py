@@ -239,6 +239,11 @@ class Table:
         """Values."""
         return self.to_frame().values
 
+    @property
+    def views(self):
+        """Available views for this table."""
+        return [v['name'] for v in self.meta['views']]
+
     @classmethod
     def from_frame(cls, df, table_name, base, id_col=0, auth_token=None, server=None):
         """Create a new table from pandas DataFrame.
