@@ -875,6 +875,39 @@ class Column:
         if any(needs_update):
             self.table.loc[needs_update, self.name] = values[needs_update]
 
+    @write_access
+    def add_options(self, options):
+        """Add options for this column.
+
+        Only works for single- and multi-select columns.
+
+        Parameters
+        ----------
+        options :   iterable
+                    A list/array of strings.
+
+        """
+        if self.dtype not in ('single-select', 'multi-select'):
+            raise TypeError('Can only set options for single- or multi-select '
+                            f'columns. This column is of type "{self.dtype}".')
+
+        if not isinstance(options, (list, set, np.ndarray)):
+            raise ValueError('`options` must be list, set or array - got '
+                             f'type({self.options})')
+
+        if not all([isinstance(e, dict) for e in options]):
+            payload = [{
+                        'name': str(o),
+                        'color': '#aaa',
+                        'textColor': '#000000'
+                        } for o in options if o]
+        else:
+            payload = options
+
+        self.table.base.add_column_options(self.table.name, self.name, payload)
+
+        logger.info(f'Added column options: {options}')
+
 
 class Filter:
     """Class representing an SQL WHERE query."""
