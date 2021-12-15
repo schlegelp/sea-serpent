@@ -9,7 +9,7 @@ import pandas as pd
 from functools import partial
 from seatable_api.main import SeaTableAPI
 from seatable_api.constants import ColumnTypes
-from tqdm.auto import trange
+from tqdm.auto import trange, tqdm
 
 from .utils import (process_records, make_records,
                     is_iterable, make_iterable, is_hashable,
@@ -1101,21 +1101,25 @@ def batch_upload(func, records, batch_size=1000, desc='Writing',
                  omit_errors=False):
     """Upload/update rows in batches of defined size."""
     no_errors = True
-    for i in trange(0, len(records), batch_size,
-                    disable=len(records) < batch_size,
-                    desc=desc):
-        batch = records[i: i + batch_size]
+    with tqdm(desc=desc,
+              total=len(records),
+              disable=len(records) < batch_size) as pbar:
 
-        r = func(rows_data=batch)
+        for i in range(0, len(records), batch_size):
+            batch = records[i: i + batch_size]
 
-        # Catching error messages for the different functions is a bit hit and
-        # miss without a documented schema
-        if not r.get('success') and 'inserted_row_count' not in r:
-            msg = f'Error writing to table (batch {int(i / batch_size)}/{len(records) // batch_size + 1}): {r}'
-            if not omit_errors:
-                raise ValueError(msg)
-            else:
-                logger.error(msg)
-                no_errors = False
+            r = func(rows_data=batch)
+
+            # Catching error messages for the different functions is a bit hit and
+            # miss without a documented schema
+            if not r.get('success') and 'inserted_row_count' not in r:
+                msg = f'Error writing to table (batch {int(i / batch_size)}/{len(records) // batch_size + 1}): {r}'
+                if not omit_errors:
+                    raise ValueError(msg)
+                else:
+                    logger.error(msg)
+                    no_errors = False
+
+            pbar.update(len(batch))
 
     return {'success'} if no_errors else {'errors'}
