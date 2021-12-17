@@ -186,3 +186,6 @@ Create column that pulls data from linked table:
 2. The web interface appears to only show floats up to the 8th decimal. In the
    database the precision must be higher though because I have successfully
    written 1e-128 floats.
+3. Infinite values (i.e. `np.inf`) raise an error when trying to write.
+4. Cells manually cleared through the UI return empty strings (``''``). By
+   default, ``sea-serpent`` will convert these to ``None`` where possible.

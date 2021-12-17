@@ -55,13 +55,19 @@ class Table:
     max_operations : int
                     How many operations (i.e. writes) we can do at a time. The
                     limit is set by the server, I think.
+    sanitize :      bool
+                    Whether to sanitize downloaded data. Specifically this will:
+                      - turn empty strings (``''``) into ``None``
+                      - turn date columns into datetime objects
+                      - turn checked columns into boolean arrays
     progress :      bool
                     Whether to show progress bars.
 
     """
 
     def __init__(self, table, base=None, auth_token=None, server=None,
-                 read_only=True, max_operations=1000, progress=True):
+                 read_only=True, max_operations=1000, sanitize=True,
+                 progress=True):
         # If the table is given as index (i.e. first table in base X), `base`
         # must not be `None`
         if isinstance(table, int) and isinstance(base, type(None)):
@@ -98,11 +104,17 @@ class Table:
         # Haven't decided if the below would actually be useful
         #self.iloc = iLocIndexer(self)
 
+        # Whether to show progress bars
+        self.progress = progress
+
+        # Whether table is read-only (default)
         self.read_only = read_only
+
+        # Whether to clean-up downloaded data
+        self.sanitize = sanitize
 
         # Maximum number of operations (e.g. edits) per batch
         self.max_operations = max_operations
-        self.progress = progress
 
         self.base.query = suppress_print(self.base.query)
 
@@ -146,7 +158,8 @@ class Table:
 
         query = create_query(self, columns=columns, where=None, limit=None)
         records = self.query(query, no_limit=True)
-        return process_records(records, columns=columns, dtypes=self.dtypes.to_dict())
+        return process_records(records, columns=columns,
+                               dtypes=self.dtypes.to_dict() if self.sanitize else None)
 
     @write_access
     def __setitem__(self, key, values):
@@ -542,7 +555,8 @@ class Table:
     def head(self, n=5):
         """Return top N rows as pandas DataFrame."""
         data = self.base.query(f'SELECT * FROM {self.name} LIMIT {n}')
-        return process_records(data, columns=self.columns, dtypes=self.dtypes.to_dict())
+        return process_records(data, columns=self.columns,
+                               dtypes=self.dtypes.to_dict() if self.sanitize else None)
 
     @write_access
     def link(self, other_table, link_on=None, link_on_other=None,
@@ -646,7 +660,7 @@ class Table:
         return process_records(data,
                                columns=self.columns,
                                row_id_index=row_id_index,
-                               dtypes=self.dtypes.to_dict())
+                               dtypes=self.dtypes.to_dict() if self.sanitize else None)
 
     def query(self, query, no_limit=False):
         """Run SQL query against this table.
@@ -767,7 +781,8 @@ class Column:
         rows = self.table.query(f'SELECT {self.name}', no_limit=True)
         return process_records(rows,
                                row_id_index=self.name != '_id',
-                               dtypes={self.name: self.dtype}).iloc[:, 0]
+                               dtypes={self.name: self.dtype} if self.table.sanitize else None
+                               ).iloc[:, 0]
 
     @write_access
     def clear(self):
@@ -849,7 +864,9 @@ class Column:
     def unique(self):
         """Return unique values in this column."""
         rows = self.table.query(f'SELECT DISTINCT {self.name}', no_limit=True)
-        return process_records(rows, dtypes=self.dtype).iloc[:, 0].values
+        return process_records(rows,
+                               dtypes=self.dtype if self.table.sanitize else None
+                               ).iloc[:, 0].values
 
     def update(self, values):
         """Update this column with given values.
@@ -973,7 +990,8 @@ class LocIndexer:
 
         query = create_query(self.table, columns=cols, where=where, limit=limit)
         records = self.table.query(query, no_limit=True)
-        data = process_records(records, dtypes=self.table.dtypes.to_dict())
+        data = process_records(records,
+                               dtypes=self.table.dtypes.to_dict() if self.table.sanitize else None)
 
         # If a single row was requested
         if isinstance(key, int):

@@ -110,6 +110,11 @@ def process_records(records, columns=None, row_id_index=True, dtypes=None):
                     df[c] = df[c].astype(float, copy=False, errors='ignore')
             elif dt == 'date':
                 df[c] = pd.to_datetime(df[c])
+            elif dt in ('text', 'long text'):
+                # Manually cleared cells will return an empty
+                # str ('') as value instead of just no value at all...
+                df.loc[df[c] == '', c] = None
+                df.loc[df[c] == 'None', c] = None
 
     return df
 
