@@ -529,6 +529,42 @@ class Table:
         if 'success' in r:
             logger.info('Rows successfully added!')
 
+    @write_access
+    def delete_rows(self, rows):
+        """Delete given rows.
+
+        Parameters
+        ----------
+        rows :      int | iterable
+                    Either a single row ID, a list of row IDs or a boolean
+                    array of the same length as the table. IMPORTANT: this
+                    expects Python indices, i.e. the first row will have index
+                    0 (by contrast, the first row in in SeaTable has index 1)!
+
+        """
+        if isinstance(rows, int):
+            rows = [rows]
+
+        rows = np.asarray(rows)
+
+        if rows.dtype != bool:
+            rows = rows.astype(int)
+        elif len(rows) != len(self):
+            raise ValueError(f'Length of boolean array ({len(rows)}) does not '
+                             f'match that of table ({len(self)})')
+
+        row_ids = self.row_ids[rows]
+
+        r = batch_upload(partial(self.base.batch_delete_rows, self.name),
+                         row_ids.tolist(),
+                         desc='Deleting',
+                         batch_param='row_ids',
+                         batch_size=self.max_operations,
+                         progress=self.progress)
+
+        if 'success' in r:
+            logger.info('Rows successfully deleted!')
+
     def fetch_logs(self, page=1, per_page=25):
         """Fetch activity logs for this table."""
         url = f"{self.server}/dtable-server/api/v1/dtables/{self.base.dtable_uuid}/operations/?page={page}&per_page={per_page}"
@@ -1154,28 +1190,35 @@ def create_query(table, columns=None, where=None, limit=None):
 
 
 def batch_upload(func, records, batch_size=1000, desc='Writing',
-                 omit_errors=False):
+                 omit_errors=False, batch_param='rows_data', progress=True):
     """Upload/update rows in batches of defined size."""
     no_errors = True
     with tqdm(desc=desc,
               total=len(records),
-              disable=len(records) < batch_size) as pbar:
+              disable=len(records) < batch_size or not progress) as pbar:
 
         for i in range(0, len(records), batch_size):
             batch = records[i: i + batch_size]
 
-            r = func(rows_data=batch)
+            r = func(**{batch_param: batch})
 
             # Catching error messages for the different functions is a bit hit and
             # miss without a documented schema
-            if not r.get('success') and 'inserted_row_count' not in r:
-                msg = f'Error writing to table (batch {int(i / batch_size)}/{len(records) // batch_size + 1}): {r}'
-                if not omit_errors:
-                    raise ValueError(msg)
-                else:
-                    logger.error(msg)
-                    no_errors = False
+            if r.get('success', False):
+                continue
+            if 'inserted_row_count' in r:
+                continue
+            if 'deleted_rows' in r:
+                continue
+
+            msg = f'Error editing table (batch {int(i / batch_size)}/{len(records) // batch_size + 1}): {r}'
+            if not omit_errors:
+                raise ValueError(msg)
+            else:
+                logger.error(msg)
+                no_errors = False
 
             pbar.update(len(batch))
+            pbar.refresh()  # for some reason this is necessary
 
     return {'success'} if no_errors else {'errors'}
