@@ -196,7 +196,8 @@ class Table:
                     'row': {key: v if not pd.isnull(v) else None}} for r, v in zip(row_ids, values)]
 
         r = batch_upload(partial(self.base.batch_update_rows, self.name),
-                         records, batch_size=self.max_operations)
+                         records, batch_size=self.max_operations,
+                         progress=self.progress)
 
         if 'success' in r:
             logger.info('Write successful!')
@@ -524,7 +525,8 @@ class Table:
 
         r = batch_upload(partial(self.base.batch_append_rows, self.name),
                          records, desc='Appending',
-                         batch_size=self.max_operations)
+                         batch_size=self.max_operations,
+                         progress=self.progress)
 
         if 'success' in r:
             logger.info('Rows successfully added!')
@@ -833,7 +835,8 @@ class Column:
 
         r = batch_upload(partial(self.table.base.batch_update_rows, self.name),
                          records, desc='Clearing',
-                         batch_size=self.table.max_operations)
+                         batch_size=self.table.max_operations,
+                         progress=self.table.progress)
 
         if 'success' in r:
             logger.info('Clear successful!')
@@ -1080,7 +1083,9 @@ class LocIndexer:
 
         r = batch_upload(partial(self.table.base.batch_update_rows,
                                  self.table.name),
-                         records, batch_size=self.table.max_operations)
+                         records,
+                         batch_size=self.table.max_operations,
+                         progress=self.table.progress)
 
         if 'success' in r:
             logger.info('Write successful!')
