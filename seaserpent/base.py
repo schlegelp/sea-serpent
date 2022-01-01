@@ -118,6 +118,9 @@ class Table:
 
         self.base.query = suppress_print(self.base.query)
 
+    def __array__(self, dtype=None):
+         return np.array(self.values, dtype=dtype)        
+
     def __dir__(self):
         """Custom __dir__ to make columns searchable."""
         return list(set(super().__dir__() + list(self.columns)))
@@ -737,6 +740,9 @@ class Column:
             self.meta = {'type': int, 'key': None}
         else:
             self.meta = [c for c in table.meta['columns'] if c['name'] == name][0]
+
+    def __array__(self, dtype=None):
+         return np.array(self.values, dtype=dtype)
 
     def __repr__(self):
         return self.__str__()
