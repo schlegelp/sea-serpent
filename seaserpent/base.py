@@ -1057,8 +1057,17 @@ class LocIndexer:
     @write_access
     def __setitem__(self, key, values):
         if not isinstance(key, tuple):
-            raise KeyError('Must provide [index, column] key when writing to '
-                           'table using the .loc Indexer.')
+            if isinstance(values, pd.DataFrame):
+                for col in values.columns:
+                    if col not in self.table.columns:
+                        logger.warning(f'Skipping column "{col}": '
+                                       'not present in table.')
+                    self[key, col] = values[col]
+                return
+            else:
+                raise KeyError('Must provide DataFrame when writing to table '
+                               'using the .loc Indexer without specifying the '
+                               'column.')
         elif len(key) != 2:
             raise IndexError(f'Wrong number of indexers ({len(key)})')
 
@@ -1104,7 +1113,7 @@ class LocIndexer:
                          progress=self.table.progress)
 
         if 'success' in r:
-            logger.info('Write successful!')
+            logger.info(f'Successfully wrote to "{col}"!')
 
 
 class iLocIndexer:
