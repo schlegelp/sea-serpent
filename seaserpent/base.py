@@ -795,6 +795,16 @@ class Column:
 
         raise TypeError(f'Unable to combine Column and "{type(other)}"')
 
+    def __contains__(self, value):
+        # Add quotation marks to string
+        if isinstance(value, str):
+            value = f"'{value}'"
+        q = (f"SELECT {self.name} "
+             f"FROM {self.table.name} "
+             f"WHERE {self.name} = {value} "
+             "LIMIT 1")
+        return any(self.table.query(q))
+
     @property
     def key(self):
         """Unique identifier of this column."""
