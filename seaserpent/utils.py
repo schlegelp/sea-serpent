@@ -116,6 +116,10 @@ def process_records(records, columns=None, row_id_index=True, dtypes=None):
                 df.loc[df[c] == '', c] = None
                 df.loc[df[c] == 'None', c] = None
 
+                # If not any ``None`` in there, convert to proper string column
+                if not any(pd.isnull(df[c].values)):
+                    df[c] = df[c].values.astype(str)
+
     return df
 
 
