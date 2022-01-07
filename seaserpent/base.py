@@ -703,7 +703,7 @@ class Table:
                                row_id_index=row_id_index,
                                dtypes=self.dtypes.to_dict() if self.sanitize else None)
 
-    def query(self, query, no_limit=False):
+    def query(self, query, no_limit=False, convert=True):
         """Run SQL query against this table.
 
         Parameters
@@ -715,6 +715,10 @@ class Table:
                     By default, the SeaTable API limits queries to 100 rows. If
                     True, we will override this by adding `LIMIT {table.shape[0]}`
                     to the query.
+        convert :   bool
+                    Whether to process raw values into something more readable.
+                    Importantly this parses single/multi-select values and
+                    date columns into datetime objects.
 
         Returns
         -------
@@ -727,7 +731,7 @@ class Table:
         if no_limit and 'LIMIT' not in query:
             query += f' LIMIT {self.shape[0]}'
         logger.debug(f'Running SQL query: {query}')
-        return self.base.query(query)
+        return self.base.query(query, convert=convert)
 
 
 class Column:
