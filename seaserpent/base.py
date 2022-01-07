@@ -946,6 +946,12 @@ class Column:
             raise ValueError(f'Length of values ({len(values)}) does not '
                              f'match length of column ({l})')
 
+        # Convert np.nan to None
+        # This is required because we want to treat np.nan like None
+        # (i.e. no/empty value) but np.nan is != None
+        values[pd.isnull(values)] = None
+
+        # Find values that need updating
         needs_update = self.values != values
 
         if any(needs_update):
