@@ -519,10 +519,18 @@ class Table:
         if not isinstance(other, pd.DataFrame):
             raise TypeError(f'`other` must be DataFrame, got "{type(other)}"')
 
-        other = other[other.columns[np.isin(other.columns, self.columns)]]
+        other = other[other.columns[np.isin(other.columns, self.columns)]].copy()        
 
         if not other.shape[1]:
             raise ValueError('None of the columns in `other` are in table')
+
+        for col in other.columns:
+            # Validate datatype
+            validate_dtype(self, col, other[col].values)
+
+            # This checks for potential int64 -> int32 issues
+            other[col] = validate_values(other[col].values,
+                                         dtype=self.dtypes[col])
 
         records = make_records(other)
 
