@@ -1,8 +1,10 @@
 import logging
+import json
 import numbers
 import requests
 import warnings
 
+import datetime as dt
 import numpy as np
 import pandas as pd
 
@@ -593,13 +595,71 @@ class Table:
         if 'success' in r:
             logger.info('Rows successfully deleted!')
 
-    def fetch_logs(self, page=1, per_page=25):
-        """Fetch activity logs for this table."""
-        url = f"{self.server}/dtable-server/api/v1/dtables/{self.base.dtable_uuid}/operations/?page={page}&per_page={per_page}"
-        r = requests.get(url, headers=self.base.headers)
-        r.raise_for_status()
+    def fetch_logs(self, max_entries=25):
+        """Fetch activity logs for this table.
 
-        return pd.DataFrame.from_records(r.json()['operations'])
+        Parameters
+        ----------
+        max_entries :   int
+                        Maximum number of logs to return. We can fetch 25
+                        entries in one query. Set to ``None`` to fetch all
+                        logs (may take a while). Note that we might fall
+                        short of this if there are multiple tables in the
+                        same base.
+
+        Returns
+        -------
+        pandas.DataFrame
+
+        """
+        page = 1
+        logs = []
+        while True:
+            url = (f"{self.server}/dtable-server/api/v1/dtables/"
+                   f"{self.base.dtable_uuid}/operations/"
+                   f"?page={page}&per_page=25")  # per_page seems to be hard-coded
+            r = requests.get(url, headers=self.base.headers)
+            r.raise_for_status()
+
+            data = r.json()['operations']
+
+            # Stop if no more pages
+            if not data:
+                break
+
+            # Create DataFrame
+            logs.append(pd.DataFrame.from_records(data))
+
+            if max_entries and (page * 25) >= max_entries:
+                break
+
+            page += 1
+
+        # Combine
+        logs = pd.concat(logs, axis=0)
+
+        # Some clean-up:
+        logs['operation'] = logs.operation.map(json.loads)
+
+        # Drop irrelevant entries
+        table = logs.operation.map(lambda x: x.get('table_id', None))
+        logs = logs[table == self.id].copy()
+
+        # Extract/parse relevant values
+        logs['op_time'] = (logs.op_time / 1e3).map(dt.datetime.fromtimestamp)
+        logs['op_type'] = logs.operation.map(lambda x: x['op_type'])
+
+        users = self.collaborators.set_index('email').name.to_dict()
+        logs.insert(0, 'user', logs.author.map(users))
+        logs.drop('author', inplace=True, axis=1)
+
+        logs['rows_modified'] = logs.operation.map(lambda x: len(x.get('row_ids', [])))
+        logs.loc[logs.op_type == 'modify_row', 'rows_modified'] = 1
+
+        col = logs.pop('operation')
+        logs['details'] = col
+
+        return logs.reset_index(drop=True)
 
     def fetch_meta(self):
         """Fetch/update meta data for table and base."""
