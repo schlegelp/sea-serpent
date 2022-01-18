@@ -210,6 +210,21 @@ class Table:
         return f'SeaTable <"{self.name}", {shape[0]} rows, {shape[1]} columns>'
 
     @property
+    def collaborators(self):
+        """List of all user with access to this table (cached)."""
+        if isinstance(getattr(self, '_collaborators', None), type(None)):
+            url = (f"{self.server}/dtable-server/api/v1/dtables/"
+                   f"{self.base.dtable_uuid}/related-users/")
+            r = requests.get(url, headers=self.base.headers)
+            r.raise_for_status()
+
+            self._collaborators = pd.DataFrame(r.json()['user_list'])
+            col = self._collaborators.pop("name")  # bring name column to front
+            self._collaborators.insert(0, col.name, col)
+
+        return self._collaborators
+
+    @property
     def meta(self):
         """Meta data for this table."""
         if not getattr(self, '_meta', None) or getattr(self, '_stale', True):
