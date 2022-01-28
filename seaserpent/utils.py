@@ -256,9 +256,15 @@ def find_base(base=None, required_table=None, auth_token=None, server=None):
         for b in w.get('table_list', []):
             # If base is not None, skip if this base is not a match
             if not isinstance(base, type(None)):
-                if not (b['id'] == base or b['name'] == base or b['uuid'] == base):
+                if not (b.get('id', None) == base or b['name'] == base or b['uuid'] == base):
                     continue
-            cand_bases.append([w['id'], b['name']])
+            cand_bases.append([b['workspace_id'], b['name']])
+        for b in w.get('shared_table_list', []):
+            # If base is not None, skip if this base is not a match
+            if not isinstance(base, type(None)):
+                if not (b.get('id', None) == base or b['name'] == base or b['uuid'] == base):
+                    continue
+            cand_bases.append([b['workspace_id'], b['name']])
 
     # Complain if no matches
     if not len(cand_bases):
