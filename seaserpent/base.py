@@ -952,12 +952,12 @@ class Column:
         if not self.key:
             raise ValueError(f'Unable to clear column {self.name}')
 
-        row_ids = self.to_series().index
+        row_ids = self.table.row_ids
 
         records = [{'row_id': r,
                     'row': {self.name: None}} for r in row_ids]
 
-        r = batch_upload(partial(self.table.base.batch_update_rows, self.name),
+        r = batch_upload(partial(self.table.base.batch_update_rows, self.table.name),
                          records, desc='Clearing',
                          batch_size=self.table.max_operations,
                          progress=self.table.progress)
