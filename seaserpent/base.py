@@ -121,7 +121,7 @@ class Table:
         self.base.query = suppress_print(self.base.query)
 
     def __array__(self, dtype=None):
-         return np.array(self.values, dtype=dtype)        
+         return np.array(self.values, dtype=dtype)
 
     def __dir__(self):
         """Custom __dir__ to make columns searchable."""
@@ -526,7 +526,7 @@ class Table:
     def append(self, other):
         """Append rows of `other` to the end of this table.
 
-        Columns in `other` that are not in the table are ignored.
+        Columns in `other` that are not also in the table are ignored.
 
         Parameters
         ----------
@@ -536,7 +536,7 @@ class Table:
         if not isinstance(other, pd.DataFrame):
             raise TypeError(f'`other` must be DataFrame, got "{type(other)}"')
 
-        other = other[other.columns[np.isin(other.columns, self.columns)]].copy()        
+        other = other[other.columns[np.isin(other.columns, self.columns)]].copy()
 
         if not other.shape[1]:
             raise ValueError('None of the columns in `other` are in table')
@@ -913,6 +913,27 @@ class Column:
     def values(self):
         return self.to_series().values
 
+    def astype(self, dtype, errors='raise'):
+        """Download and cast data to specified dtype ``dtype``.
+
+        Parameters
+        ----------
+        dtype :     data type, or dict of column name -> data type
+                    Use a numpy.dtype or Python type to cast entire column to.
+        errors :    'raise' | 'ignore'
+                    Control raising of exceptions on invalid data for provided
+                    dtype.
+
+                        - ``raise`` : allow exceptions to be raised
+                        - ``ignore`` : suppress exceptions.
+
+        Returns
+        -------
+        np.ndarray
+
+        """
+        return self.to_series().astype(dtype, errors=errors)
+
     def isnull(self):
         """Test if values are null."""
         return self.to_series().isnull()
@@ -971,6 +992,25 @@ class Column:
         other = tuple(other)
 
         return Filter(f"{self.name} IN {str(other)}")
+
+    def map(self, arg, na_action=None):
+        """Map values of columns according to input correspondence.
+
+        Parameters
+        ----------
+        arg :       function, collections.abc.Mapping subclass or Series
+                    Mapping correspondence.
+        na_action : None | 'ignore'
+                    If 'ignore', propagate NaN values, without passing them to
+                    the mapping correspondence.
+
+        Returns
+        -------
+        Series
+                    Same index as caller.
+
+        """
+        return self.to_series().map(arg, na_action=na_action)
 
     @write_access
     def rename(self, new_name):

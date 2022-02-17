@@ -20,7 +20,7 @@ pip3 install sea-serpent
 Bleeding edge from Github:
 
 ```bash
-pip3 install git+git://github.com/schlegelp/sea-serpent@main
+pip3 install git+https://github.com/schlegelp/sea-serpent@main
 ```
 
 ## Examples
@@ -35,7 +35,7 @@ pip3 install git+git://github.com/schlegelp/sea-serpent@main
 {'token': 'somelongassstring1234567@£$^@£$^£'}
 ```
 
-For future use set your default server and auth token as `SEATABLE_SERVER` and
+For future use, set your default server and auth token as `SEATABLE_SERVER` and
 `SEATABLE_TOKEN` environment variable, respectively.
 
 ### Initializing a table
@@ -46,7 +46,7 @@ you can initialize the connection with just the name:
 ```python
 >>> import seaserpent as ss
 >>> # Initialize the table
->>> # (if there are multiple tables with this name you need to provide more details)
+>>> # (if there are multiple tables with this name you need to provide the base too)
 >>> table = ss.Table(table='MyTable')
 >>> table
 SeaTable <"MyTable", 10 rows, 2 columns>
@@ -125,8 +125,8 @@ Column <column="column1", table="LH_bodies", datatype=number>
 1         2          B     False
 2         3          C      True
 >>> # To write only changed values to the table
->>> # (more economic, better for logs)
->>> values = table.checked.values 
+>>> # (faster & better for logs)
+>>> values = table.checked.values
 >>> values[0:2] = True  # Change only two values
 >>> table.checked.update(values)
 ```
