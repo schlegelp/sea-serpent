@@ -1151,6 +1151,10 @@ class LocIndexer:
         if isinstance(key, int):
             data = data.iloc[0]
 
+        # If a single column was requested
+        if isinstance(cols, str):
+            data = data[cols]
+
         return data
 
     @write_access
