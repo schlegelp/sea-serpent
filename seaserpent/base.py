@@ -1006,6 +1006,12 @@ class Column:
     def unique(self):
         """Return unique values in this column."""
         rows = self.table.query(f'SELECT DISTINCT {self.name}', no_limit=True)
+
+        # Rows is a list of dicts where ['{colum: value1}, {column: value2}']
+        # Empty strings and Nones appear to show up as e.g. [{column_id: None}]
+        # Here we will force the column_id entries to column names
+        rows = [{self.name: list(r.values())[0]} for r in rows]
+
         return process_records(rows,
                                dtypes=self.dtype if self.table.sanitize else None
                                ).iloc[:, 0].values
