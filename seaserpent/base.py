@@ -1232,6 +1232,8 @@ class LocIndexer:
                                row_id_index=isinstance(cols, str) and cols != '_id',
                                dtypes=self.table.dtypes.to_dict() if self.table.sanitize else None)
 
+        # Reindex columns so that we have columns even if data is empty
+        data = data.reindex(make_iterable(cols), axis=1)
 
         # If index was boolean mask subset to requested rows
         if isinstance(where, np.ndarray):
