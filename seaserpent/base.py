@@ -934,9 +934,43 @@ class Column:
         """
         return self.to_series().astype(dtype, errors=errors)
 
-    def isnull(self):
-        """Test if values are null."""
-        return self.to_series().isnull()
+    def isnull(self, empty_str=True):
+        """Filter for NULL.
+
+        Parameters
+        ----------
+        empty_str :     bool
+                        Whether to treat empty strings as null. Only relevant
+                        for text columns.
+
+        Returns
+        -------
+        Filter
+
+        """
+        if empty_str and self.dtype == 'text':
+            return Filter(f"{self.name} IS NULL or {self.name} = ''")
+        else:
+            return Filter(f"{self.name} IS NULL")
+
+    def notnull(self, empty_str=True):
+        """Filter for not NULL.
+
+        Parameters
+        ----------
+        empty_str :     bool
+                        Whether to treat empty strings as null. Only relevant
+                        for text columns.
+
+        Returns
+        -------
+        Filter
+
+        """
+        if empty_str and self.dtype == 'text':
+            return Filter(f"{self.name} IS NOT NULL and {self.name} != ''")
+        else:
+            return Filter(f"{self.name} IS NOT NULL")
 
     def to_series(self):
         """Return this column as pandas.Series."""
