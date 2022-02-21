@@ -824,7 +824,7 @@ class Column:
         self.name = name
         self.table = table
         if name == '_id':
-            self.meta = {'type': int, 'key': None}
+            self.meta = {'type': str, 'key': None}
         else:
             self.meta = [c for c in table.meta['columns'] if c['name'] == name][0]
 
