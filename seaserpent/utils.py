@@ -379,25 +379,26 @@ def validate_dtype(table, column, values):
 def validate_table(table):
     """Make sure table can be uploaded.
 
-    In particular, we're making sure that 64bit integers are either safely
-    converted to 32bit or, failing that, turned into floats.
+    In particular, we're making sure that 64bit integers/floats are either
+    safely converted to 32bit or, failing that, turned into strings.
     """
     # Avoid unnecessary copies
     is_copy = False
     # For each column check...
     for col in table.columns:
-        # ... if it's 64 bit integers
-        if table.dtypes[col] == np.int64:
+        # ... if it's 64 bit integers/floats
+        if table.dtypes[col] == (np.int64, np.float64):
             # Make copy if not already happened
             if not is_copy:
                 table = table.copy()
                 is_copy = False
             # If too large/small for 32 bits
             if table[col].max() > 2_147_483_647 or table[col].min() < -2_147_483_648:
-                table[col] = table[col].astype(float)
+                table[col] = table[col].astype(str)
             else:
                 table[col] = table[col].astype(np.int32)
-        elif table.dtypes[col] in (float, np.float32, np.float64):
+
+        if table.dtypes[col] in (float, np.float32, np.float64):
             if any(np.isinf(table[col].values)):
                 raise ValueError(f'Column "{col}" contains non-finite values.')
 

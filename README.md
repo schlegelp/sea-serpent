@@ -178,11 +178,11 @@ Create column that pulls data from linked table:
 
 ## Known limitations & oddities
 
-1. 64 bit integers are truncated when writing to a table. I suspect this happens
-   on the server side when decoding the JSON payload because manually entering
-   large numbers through the web interface works perfectly well. Hence,
-   seaserpent safely (and quietly) downcasts 64 bit integers to 32 bit or
-   failing that converts them to floats before uploading.
+1. 64 bit integers/floats are truncated when writing to a table. I suspect this
+   happens on the server side when decoding the JSON payload because manually
+   entering large numbers through the web interface works perfectly well
+   (copy-pasting still fails though). Hence, `seaserpent` quietly downcasts 64
+   bit to 32 bit if possible and failing that converts to strings before uploading.
 2. The web interface appears to only show floats up to the 8th decimal. In the
    database the precision must be higher though because I have successfully
    written 1e-128 floats.
