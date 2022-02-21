@@ -1174,19 +1174,19 @@ class Filter:
 
     def __and__(self, other):
         if isinstance(other, Filter):
-            return Filter(f'{self.query} AND {other.query}')
+            return Filter(f'({self.query}) AND ({other.query})')
         elif isinstance(other, Column):
             if other.dtype == 'checkbox':
-                return Filter(f'{self.query} AND {other.name}')
+                return Filter(f'({self.query}) AND {other.name}')
 
         raise TypeError(f'Unable to combine Filter and "{type(other)}"')
 
     def __or__(self, other):
         if isinstance(other, Filter):
-            return Filter(f'{self.query} OR {other.query}')
+            return Filter(f'({self.query}) OR ({other.query})')
         elif isinstance(other, Column):
             if other.dtype == 'checkbox':
-                return Filter(f'{self.query} OR {other.name}')
+                return Filter(f'({self.query}) OR ({other.name})')
 
         raise TypeError(f'Unable to combine Filter and "{type(other)}"')
 
