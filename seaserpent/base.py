@@ -1216,10 +1216,26 @@ class LocIndexer:
         else:
             where, cols = key, self.table.columns
 
-        query = create_query(self.table, columns=cols, where=where, limit=limit)
+        if isinstance(where, pd.Series):
+            where = where.values
+
+        # If where is boolean mask fetch the entire frame
+        if isinstance(where, np.ndarray):
+            if where.dtype != bool:
+                raise KeyError('Unable to index by non-boolean iterable')
+            query = create_query(self.table, columns=cols, where=None, limit=limit)
+        else:
+            query = create_query(self.table, columns=cols, where=where, limit=limit)
+
         records = self.table.query(query, no_limit=True)
         data = process_records(records,
+                               row_id_index=isinstance(cols, str) and cols != '_id',
                                dtypes=self.table.dtypes.to_dict() if self.table.sanitize else None)
+
+
+        # If index was boolean mask subset to requested rows
+        if isinstance(where, np.ndarray):
+            data = data.loc[where].copy()
 
         # If a single row was requested
         if isinstance(key, int):
@@ -1263,7 +1279,7 @@ class LocIndexer:
                 raise KeyError('Unable to index by non-boolean iterable')
             row_ids = self.table.row_ids[where]
         else:
-            row_ids = self[where, '_id'].index
+            row_ids = self[where, '_id'].values
 
         if isinstance(values, (pd.Series, Column)):
             values = values.values
