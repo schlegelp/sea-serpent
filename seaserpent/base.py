@@ -940,44 +940,6 @@ class Column:
         """
         return self.to_series().astype(dtype, errors=errors)
 
-    def isnull(self, empty_str=True):
-        """Filter for NULL.
-
-        Parameters
-        ----------
-        empty_str :     bool
-                        Whether to treat empty strings as null. Only relevant
-                        for text columns.
-
-        Returns
-        -------
-        Filter
-
-        """
-        if empty_str and self.dtype == 'text':
-            return Filter(f"{self.name} IS NULL or {self.name} = ''")
-        else:
-            return Filter(f"{self.name} IS NULL")
-
-    def notnull(self, empty_str=True):
-        """Filter for not NULL.
-
-        Parameters
-        ----------
-        empty_str :     bool
-                        Whether to treat empty strings as null. Only relevant
-                        for text columns.
-
-        Returns
-        -------
-        Filter
-
-        """
-        if empty_str and self.dtype == 'text':
-            return Filter(f"{self.name} IS NOT NULL and {self.name} != ''")
-        else:
-            return Filter(f"{self.name} IS NOT NULL")
-
     def to_series(self):
         """Return this column as pandas.Series."""
         rows = self.table.query(f'SELECT {self.name}', no_limit=True)
@@ -1018,6 +980,33 @@ class Column:
             raise ValueError(f'Error writing to table: {resp}')
         logger.info(f'Column "{self.name}" deleted.')
 
+    def contains(self, pat):
+        """Filter to strings containing given substring."""
+        if self.dtype != 'text':
+            raise ValueError('Can only Filter by substring if Column is of '
+                             f'type "text", not {self.dtype}')
+        if not isinstance(pat, str):
+            raise TypeError(f'`pat` must be str, not "{type(pat)}"')
+        return Filter(f"{self.name} LIKE '%{pat}%'")
+
+    def startswith(self, pat):
+        """Filter to strings starting with given substring."""
+        if self.dtype != 'text':
+            raise ValueError('Can only Filter by substring if Column is of '
+                             f'type "text", not {self.dtype}')
+        if not isinstance(pat, str):
+            raise TypeError(f'`pat` must be str, not "{type(pat)}"')
+        return Filter(f"{self.name} LIKE '{pat}%'")
+
+    def endswith(self, pat):
+        """Filter to strings ending with given substring."""
+        if self.dtype != 'text':
+            raise ValueError('Can only Filter by substring if Column is of '
+                             f'type "text", not {self.dtype}')
+        if not isinstance(pat, str):
+            raise TypeError(f'`pat` must be str, not "{type(pat)}"')
+        return Filter(f"{self.name} LIKE '%{pat}'")
+
     def isin(self, other):
         """Filter to values in `other`."""
         if not is_iterable(other):
@@ -1032,6 +1021,44 @@ class Column:
         other = tuple(other)
 
         return Filter(f"{self.name} IN {str(other)}")
+
+    def isnull(self, empty_str=True):
+        """Filter for NULL.
+
+        Parameters
+        ----------
+        empty_str :     bool
+                        Whether to treat empty strings as null. Only relevant
+                        for text columns.
+
+        Returns
+        -------
+        Filter
+
+        """
+        if empty_str and self.dtype == 'text':
+            return Filter(f"{self.name} IS NULL or {self.name} = ''")
+        else:
+            return Filter(f"{self.name} IS NULL")
+
+    def notnull(self, empty_str=True):
+        """Filter for not NULL.
+
+        Parameters
+        ----------
+        empty_str :     bool
+                        Whether to treat empty strings as null. Only relevant
+                        for text columns.
+
+        Returns
+        -------
+        Filter
+
+        """
+        if empty_str and self.dtype == 'text':
+            return Filter(f"{self.name} IS NOT NULL and {self.name} != ''")
+        else:
+            return Filter(f"{self.name} IS NOT NULL")
 
     def map(self, arg, na_action=None):
         """Map values of columns according to input correspondence.
