@@ -809,6 +809,9 @@ class Table:
                     Records (list of dicts) contain the results of the query.
 
         """
+        if isinstance(query, Filter):
+            query = f'SELECT * from {self.name} WHERE {query.query}'
+
         if 'from' not in query.lower():
             query = f'{query} FROM {self.name}'
         if no_limit and 'LIMIT' not in query:
