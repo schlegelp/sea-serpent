@@ -853,6 +853,9 @@ class Column:
             # This is assuming other is a number
             return Filter(f"{self.name} = {other}")
 
+    def __ne__(self, other):
+        return Filter((self == other).query.replace('=', '!='))
+
     def __ge__(self, other):
         return Filter((self > other).query.replace('>', '>='))
 
