@@ -791,7 +791,7 @@ class Table:
 
         Parameters
         ----------
-        query :     str
+        query :     str | Filter
                     The SQL query. The "FROM {TABLENAME}" will be automatically
                     added to the end of the query if not already present.
         no_limit :  bool
