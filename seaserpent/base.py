@@ -1199,11 +1199,27 @@ class Filter:
     def __str__(self):
         return f'SQL filter query <"{self.query}">'
 
-    def __neg__(self):
-        if self.query.startswith('NOT'):
-            return Filter(self.query[4:])
+    def __invert__(self):
+        if ' AND ' in self.query or ' or ' in self.query:
+            raise ValueError('Unable to invert Filter combinations')
+        elif ' = ' in self.query:
+            return Filter(self.query.replace(' = ', ' != '))
+        elif ' != ' in self.query:
+            return Filter(self.query.replace(' != ', ' = '))
+        elif ' NOT IN ' in self.query:
+            return Filter(self.query.replace(' NOT IN ', ' IN '))
+        elif ' IN ' in self.query:
+            return Filter(self.query.replace(' IN ', ' NOT IN '))
+        elif ' IS NOT ' in self.query:
+            return Filter(self.query.replace(' IS NOT ', ' IS '))
+        elif ' IS ' in self.query:
+            return Filter(self.query.replace(' IS ', ' IS NOT '))
+        elif ' NOT LIKE ' in self.query:
+            return Filter(self.query.replace(' NOT LIKE ', ' LIKE '))
+        elif ' LIKE ' in self.query:
+            return Filter(self.query.replace(' LIKE ', ' NOT LIKE '))
         else:
-            return Filter(f'NOT {self.query}')
+            raise ValueError(f'Unable to invert Filter "{self.query}"')
 
     def __and__(self, other):
         if isinstance(other, Filter):
@@ -1211,6 +1227,8 @@ class Filter:
         elif isinstance(other, Column):
             if other.dtype == 'checkbox':
                 return Filter(f'({self.query}) AND {other.name}')
+            raise TypeError('Unable to combine Filter and column of type '
+                            f'"{other}.dtype"')
 
         raise TypeError(f'Unable to combine Filter and "{type(other)}"')
 
