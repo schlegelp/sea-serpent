@@ -140,6 +140,13 @@ Column <column="column1", table="LH_bodies", datatype=number>
 0         1          A
 1         2          B
 2         3          C
+>>> # Alternatively you can also clear an entire column
+>>> table.checked.clear()
+>>> table.head()
+    column1     labels   checked
+0         1          A      None
+1         2          B      None
+2         3          C      None
 ```
 
 ### Creating a new table
