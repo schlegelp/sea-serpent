@@ -410,6 +410,15 @@ class Table:
         if any(miss):
             raise KeyError(f'"{miss}" not among columns')
 
+    def _col_ids_to_names(self, ids):
+        """Map column IDs to names."""
+        id_map = {c['key']: c['name'] for c in self.meta['columns']}
+
+        if not is_iterable(ids):
+            return id_map[ids]
+
+        return [id_map[i] for i in ids]
+
     @write_access
     def add_column(self, col_name, col_type, col_data=None, col_options=None):
         """Add new column to table.
@@ -676,6 +685,85 @@ class Table:
 
         return meta[0]
 
+    def get_view(self, view, hide_cols=True, sort=True):
+        """Download given view of tthe table.
+
+        Applies filters, sorts and hidden columns. Groupings are ignored.
+
+        Parameters
+        ----------
+        view :      str | int
+                    Name or index of the view.
+        hide_cols : bool
+                    Whether to exclude columns hidden in this view.
+        sort :      bool
+                    Whether to apply same sort as in view.
+
+        Returns
+        -------
+        pd.DataFrame
+
+        """
+        if isinstance(view, str):
+            if view not in self.views:
+                raise ValueError(f'"{view}" not found')
+            view = [v for v in self.meta['views'] if v['name'] == view]
+            if len(view) > 1:
+                raise ValueError(f'Found multiple views with name "{view}". '
+                                 'Consider using an index instead.')
+            view = view[0]
+        elif isinstance(view, int):
+            view = self.meta['views'][view]
+        else:
+            raise TypeError(f'Expected `view` to be str or int, got "{type(view)}"')
+
+        # Create filters
+        filters = []
+        for f in view['filters']:
+            col_name = [c['name'] for c in self.meta['columns'] if c['key'] == f['column_key']][0]
+            col = self[col_name]
+
+            # Map IDs to actual values (if applicable)
+            f['filter_term'] = col._ids_to_values(f['filter_term'])
+
+            if f['filter_predicate'] == 'is':
+                filters.append(col == f['filter_term'])
+            elif f['filter_predicate'] == 'is_not':
+                filters.append(col != f['filter_term'])
+            elif f['filter_predicate'] == 'is_not_empty':
+                filters.append(col.notnull())
+            elif f['filter_predicate'] == 'is_empty':
+                filters.append(col.isnull())
+            elif f['filter_predicate'] == 'is_none_of':
+                filters.append(~col.isin(f['filter_term']))
+            elif f['filter_predicate'] == 'is_any_of':
+                filters.append(col.isin(f['filter_term']))
+            elif f['filter_predicate'] == 'contains':
+                filters.append(col.contains(f['filter_term']))
+            elif f['filter_predicate'] == 'does_not_contain':
+                filters.append(~col.contains(f['filter_term']))
+            else:
+                raise ValueError(f'Unsupported filter predicate: "{f["filter_predicate"]}"')
+
+        conj = view.get('filter_conjunction', 'AND')
+        comb = Filter(f' {conj} '.join([f'({f.query})' for f in filters]))
+
+        if hide_cols:
+            hidden_cols = self._col_ids_to_names(view.get('hidden_columns', []))
+            cols = [c for c in self.columns if c not in hidden_cols]
+
+            data = self.loc[comb, cols]
+        else:
+            data = self.loc[comb]
+
+        if sort and view.get('sorts', None):
+            cols = self._col_ids_to_names([s['column_key'] for s in view['sorts']])
+            asc = [True if s['sort_type'] == 'up' else False for s in view['sorts']]
+
+            data = data.sort_values(cols, ascending=asc)
+
+        return data
+
     def head(self, n=5):
         """Return top N rows as pandas DataFrame."""
         data = self.base.query(f'SELECT * FROM {self.name} LIMIT {n}')
@@ -919,6 +1007,33 @@ class Column:
     def values(self):
         return self.to_series().values
 
+    def _ids_to_values(self, ids):
+        """Map ID(s) (e.g. for single-select Columns) to values.
+
+        Will simply pass-through if column doesn't use IDs.
+
+        Parameters
+        ----------
+        ids :   str | iterable
+                The IDs to map. E.g. "399046".
+
+        Returns
+        -------
+        value(s)
+
+        """
+        if 'data' not in self.meta or not self.meta['data']:
+            return ids
+        if 'options' not in self.meta['data']:
+            return ids
+
+        id_map = {r['id']: r['name'] for r in self.meta['data']['options']}
+
+        if not is_iterable(ids):
+            return id_map[ids]
+
+        return [id_map[i] for i in ids]
+
     def astype(self, dtype, errors='raise'):
         """Download and cast data to specified dtype ``dtype``.
 
@@ -1113,11 +1228,6 @@ class Column:
     def unique(self):
         """Return unique values in this column."""
         rows = self.table.query(f'SELECT DISTINCT {self.name}', no_limit=True)
-
-        # Rows is a list of dicts where ['{colum: value1}, {column: value2}']
-        # Empty strings and Nones appear to show up as e.g. [{column_id: None}]
-        # Here we will force the column_id entries to column names
-        rows = [{self.name: list(r.values())[0]} for r in rows]
 
         return process_records(rows,
                                dtypes=self.dtype if self.table.sanitize else None
