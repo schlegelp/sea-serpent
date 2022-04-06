@@ -491,3 +491,13 @@ def make_records(table):
     records = [{k: v for k, v in r.items() if not pd.isnull(v)} for r in records]
 
     return records
+
+
+def flatten(x):
+    """Flatten list of lists."""
+    if not isinstance(x, list):
+        return [x]
+    l = []
+    for v in x:
+        l += flatten(v)
+    return l

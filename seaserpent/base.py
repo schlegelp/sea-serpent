@@ -41,7 +41,8 @@ class Table:
                     Name or index of the table. If index, you must provide a
                     base.
     base :          str | int | SeaTableAPI, optional
-                    Name, ID or UUID of the base containing ``table``. If not
+                    Name, ID or UUID of the base containing ``table``. Providing
+                    the base can greatly speed up initialization. If not
                     provided will try to find a base containing ``table``.
     auth_token :    str, optional
                     Your user's auth token (not the base token). Can either
@@ -717,33 +718,61 @@ class Table:
         else:
             raise TypeError(f'Expected `view` to be str or int, got "{type(view)}"')
 
-        # Create filters
-        filters = []
+        # Create filters:
+        # We need to group the filters by field and predicate to avoid producing
+        # queries like "(fieldA != 'value1') AND (fieldB != 'value2')"
+        # Instead we need to combine them to
+        # "(fieldA not in ('value1', 'value2')"
+        view['filters_grp'] = {}
         for f in view['filters']:
+            # Translate col IDs to names while we're at it
             col_name = [c['name'] for c in self.meta['columns'] if c['key'] == f['column_key']][0]
+            if col_name not in view['filters_grp']:
+                view['filters_grp'][col_name] = {}
+
+            pred = f['filter_predicate']
+            if pred not in view['filters_grp'][col_name]:
+                view['filters_grp'][col_name][pred] = []
+            view['filters_grp'][col_name][pred].append(f['filter_term'])
+
+        filters = []
+        for col_name in view['filters_grp']:
+            # Get the column with this name
             col = self[col_name]
 
             # Map IDs to actual values (if applicable)
-            f['filter_term'] = col._ids_to_values(f['filter_term'])
+            for predicate in view['filters_grp'][col_name]:
+                terms = view['filters_grp'][col_name][predicate]
 
-            if f['filter_predicate'] == 'is':
-                filters.append(col == f['filter_term'])
-            elif f['filter_predicate'] == 'is_not':
-                filters.append(col != f['filter_term'])
-            elif f['filter_predicate'] == 'is_not_empty':
-                filters.append(col.notnull())
-            elif f['filter_predicate'] == 'is_empty':
-                filters.append(col.isnull())
-            elif f['filter_predicate'] == 'is_none_of':
-                filters.append(~col.isin(f['filter_term']))
-            elif f['filter_predicate'] == 'is_any_of':
-                filters.append(col.isin(f['filter_term']))
-            elif f['filter_predicate'] == 'contains':
-                filters.append(col.contains(f['filter_term']))
-            elif f['filter_predicate'] == 'does_not_contain':
-                filters.append(~col.contains(f['filter_term']))
-            else:
-                raise ValueError(f'Unsupported filter predicate: "{f["filter_predicate"]}"')
+                if predicate == 'is' and len(terms) > 1:
+                    predicate = 'is_any_of'
+                elif predicate == 'is_not' and len(terms) > 1:
+                    predicate = 'is_none_of'
+
+                terms = flatten(terms)
+                terms = col._ids_to_values(terms)
+
+                # Flatten a potential list of lists
+                if predicate == 'is':
+                    filters.append(col == terms[0])
+                elif predicate == 'is_not':
+                    filters.append(col != terms[0])
+                elif predicate == 'is_not_empty':
+                    filters.append(col.notnull())
+                elif predicate == 'is_empty':
+                    filters.append(col.isnull())
+                elif predicate == 'is_none_of':
+                    filters.append(~col.isin(terms))
+                elif predicate == 'is_any_of':
+                    filters.append(col.isin(terms))
+                elif predicate == 'contains':
+                    for t in terms:
+                        filters.append(col.contains(t))
+                elif predicate == 'does_not_contain':
+                    for t in terms:
+                        filters.append(~col.contains(t))
+                else:
+                    raise ValueError(f'Unsupported filter predicate: "{f["filter_predicate"]}"')
 
         conj = view.get('filter_conjunction', 'AND')
         comb = Filter(f' {conj} '.join([f'({f.query})' for f in filters]))
@@ -966,6 +995,12 @@ class Column:
         if isinstance(other, Column):
             if other.dtype == 'checkbox':
                 return Filter(f'{self.name} AND {other.name}')
+        elif isinstance(other, Filter):
+            if self.dtype == 'checkbox':
+                return Filter(f'{self.name}') & other
+            else:
+                raise TypeError('Unable to construct filter from column of '
+                                f'type {self.dtype}')
 
         raise TypeError(f'Unable to combine Column and "{type(other)}"')
 
@@ -973,6 +1008,12 @@ class Column:
         if isinstance(other, Column):
             if other.dtype == 'checkbox':
                 return Filter(f'{self.name} OR {other.name}')
+        elif isinstance(other, Filter):
+            if self.dtype == 'checkbox':
+                return Filter(f'{self.name}') | other
+            else:
+                raise TypeError('Unable to construct filter from column of '
+                                f'type {self.dtype}')
 
         raise TypeError(f'Unable to combine Column and "{type(other)}"')
 
