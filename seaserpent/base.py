@@ -605,23 +605,39 @@ class Table:
         if 'success' in r:
             logger.info('Rows successfully deleted!')
 
-    def fetch_logs(self, max_entries=25):
+    def fetch_logs(self, max_entries=25, max_time=None, unpack=True):
         """Fetch activity logs for this table.
 
         Parameters
         ----------
         max_entries :   int
-                        Maximum number of logs to return. We can fetch 25
-                        entries in one query. Set to ``None`` to fetch all
-                        logs (may take a while). Note that we might fall
-                        short of this if there are multiple tables in the
-                        same base.
+                        Maximum number of logs to return. Set to ``None`` to
+                        fetch all logs (may take a while). Since  we fetch 25
+                        entries in one go, we might overshoot this value.
+        max_time :      dt.date | dt.datetime
+                        Max time to go back to. Max entries still applies! To
+                        make sure you get to go all the way back, set
+                        max_entries to ``None``.
+        unpack :        bool
+                        If False, each row represents an operation on multiple
+                        rows/values. If True, each row will represent an edit
+                        to a single value. This will drop anything that isn't
+                        a "modify_rows" operation!
 
         Returns
         -------
         pandas.DataFrame
 
         """
+        # Convert date to datetime
+        if isinstance(max_time, dt.date):
+            max_time = dt.datetime(max_time.year, max_time.month, max_time.day)
+
+        # Convert datetime to timestamp
+        if isinstance(max_time, dt.datetime):
+            max_time = int(dt.datetime.timestamp(max_time) * 1e3)
+
+        entries = 0
         page = 1
         logs = []
         while True:
@@ -640,7 +656,19 @@ class Table:
             # Create DataFrame
             logs.append(pd.DataFrame.from_records(data))
 
-            if max_entries and (page * 25) >= max_entries:
+            # Parse op dictionary
+            logs[-1]['operation'] = logs[-1].operation.map(json.loads)
+
+            # Drop irrelevant entries
+            table = logs[-1].operation.map(lambda x: x.get('table_id', None))
+            logs[-1] = logs[-1][table == self.id]
+
+            entries += logs[-1].shape[0]
+
+            if max_entries and entries >= max_entries:
+                break
+
+            if max_time and logs[-1].op_time.values[-1] <= max_time:
                 break
 
             page += 1
@@ -649,18 +677,13 @@ class Table:
         logs = pd.concat(logs, axis=0)
 
         # Some clean-up:
-        logs['operation'] = logs.operation.map(json.loads)
-
-        # Drop irrelevant entries
-        table = logs.operation.map(lambda x: x.get('table_id', None))
-        logs = logs[table == self.id].copy()
-
         # Extract/parse relevant values
         logs['op_time'] = (logs.op_time / 1e3).map(dt.datetime.fromtimestamp)
-        logs['op_type'] = logs.operation.map(lambda x: x['op_type'])
+        logs['op_type'] = logs.operation.map(lambda x: x['op_type']).astype('category')
 
         users = self.collaborators.set_index('email').name.to_dict()
         logs.insert(0, 'user', logs.author.map(users))
+        logs['user'] = logs['user'].astype('category')
         logs.drop('author', inplace=True, axis=1)
 
         logs['rows_modified'] = logs.operation.map(lambda x: len(x.get('row_ids', [])))
@@ -669,7 +692,54 @@ class Table:
         col = logs.pop('operation')
         logs['details'] = col
 
-        return logs.reset_index(drop=True)
+        def clean_details(x):
+            """Run some clean up on the details column."""
+            # Pop some values we don't need (anymore)
+            _ = x.pop('table_id', '')
+            _ = x.pop('op_type', '')
+
+            return x
+
+        logs['details'] = logs.details.map(clean_details)
+
+        logs = logs.reset_index(drop=True)
+
+        if unpack:
+            unpacked = []
+            for row in logs[logs.op_type.isin(['modify_rows', 'modify_row'])].itertuples():
+                user = row.user
+                app = row.app
+                op_time = row.op_time
+                op_id = row.op_id
+                op_type = row.op_type
+                details = row.details
+
+                # If single row turn it into a fake multi row edit
+                if row.op_type == 'modify_row':
+                    row_id = details['row_id']
+                    details['row_ids'] = [row_id]
+                    details['updated'] = {row_id: details['updated']}
+                    details['old_rows'] = {row_id: details['old_row']}
+
+                for id in details['row_ids']:
+                    for col, new_value in details['updated'][id].items():
+                        # Skip internal columns like '_last_modifier'
+                        if col.startswith('_'):
+                            continue
+                        old_value = details['old_rows'][id].get(col, None)
+                        unpacked.append([user, app, op_time, op_id,
+                                         id, col, old_value, new_value])
+
+            logs = pd.DataFrame(unpacked,
+                                columns=['user', 'app', 'op_time', 'op_id',
+                                         'row_id', 'column',
+                                         'old_value', 'new_value'])
+
+            logs['column'] = self._col_ids_to_names(logs.column.values)
+            for c in ['user', 'app', 'column']:
+                logs[c] = logs[c].astype('category')
+
+        return logs
 
     def fetch_meta(self):
         """Fetch/update meta data for table and base."""
