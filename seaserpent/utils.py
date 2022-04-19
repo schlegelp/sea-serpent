@@ -3,6 +3,7 @@ import numbers
 import os
 import requests
 import sys
+import logging
 
 import datetime as dt
 import numpy as np
@@ -11,6 +12,9 @@ import pandas as pd
 from seatable_api import Account
 from seatable_api.constants import ColumnTypes
 
+
+logger = logging.getLogger(__name__)
+logger.setLevel('INFO')
 
 COLUMN_TYPES = {
     (int, float, 'i', 'u', 'int', 'f', 'float', 'number'): ColumnTypes.NUMBER,  # number
@@ -405,7 +409,7 @@ def validate_table(table):
     return table
 
 
-def validate_values(values, dtype=None):
+def validate_values(values, col=None):
     """Similar to validate_table but for a 1d array."""
     # Note that any list of numeric, non-decimal values will automatically
     # get the np.int64 datatype -> hence we won't warn if we safely downcast
@@ -426,7 +430,7 @@ def validate_values(values, dtype=None):
             raise ValueError('At least some values are non-finite.')
 
     # Dates must be given as strings "YEAR-MONTH-DAY HOUR:MINUTE:SECONDS"
-    if dtype == 'date':
+    if col.dtype == 'date':
         # If object type make sure each value is converted correctly
         if values.dtype == 'O':
             # Do not use np.isnan here!
@@ -466,6 +470,16 @@ def validate_values(values, dtype=None):
             raise TypeError('Dates must be given as string(s) (e.g. '
                             '"2021-10-01 10:10"), or as datetime or '
                             f'numpy.datetime64 objects. Got {values.dtype}.')
+    elif col.dtype in ('single-select', 'multiple-select'):
+        options = [o['name'] for o in col.meta['data']['options']]
+        not_options = ~np.isin(values, options)
+        if any(not_options):
+            miss = np.unique(values[not_options]).astype(str).tolist()
+            logger.warning('Some of the values to write are not currently '
+                           f'among options for column "{col.name}" ({col.dtype}):'
+                           f' {", ".join(miss)}.\nThese will be added '
+                           'automatically but you will need to refresh the '
+                           'website for them to show up.')
 
     return values.tolist()
 

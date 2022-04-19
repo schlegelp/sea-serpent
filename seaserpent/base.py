@@ -193,7 +193,7 @@ class Table:
         validate_dtype(self, key, values)
 
         # This checks for potential int64 -> int32 issues
-        values = validate_values(values, dtype=self.dtypes[key])
+        values = validate_values(values, col=self[key])
 
         # Fetch the IDs
         row_ids = self.query('SELECT _id', no_limit=True)
@@ -557,7 +557,7 @@ class Table:
 
             # This checks for potential int64 -> int32 issues
             other[col] = validate_values(other[col].values,
-                                         dtype=self.dtypes[col])
+                                         col=self[col])
 
         records = make_records(other)
 
@@ -943,10 +943,6 @@ class Column:
     def __init__(self, name, table):
         self.name = name
         self.table = table
-        if name == '_id':
-            self.meta = {'type': str, 'key': None}
-        else:
-            self.meta = [c for c in table.meta['columns'] if c['name'] == name][0]
 
     def __array__(self, dtype=None):
          return np.array(self.values, dtype=dtype)
@@ -1043,6 +1039,14 @@ class Column:
     @property
     def dtype(self):
         return self.meta['type']
+
+    @property
+    def meta(self):
+        """Meta data for this column."""
+        if self.name == '_id':
+            return {'type': str, 'key': None}
+        else:
+            return [c for c in self.table.meta['columns'] if c['name'] == self.name][0]
 
     @property
     def values(self):
@@ -1498,7 +1502,7 @@ class LocIndexer:
         validate_dtype(self.table, col, values)
 
         # This checks for potential int64 -> int32 issues
-        values = validate_values(values, dtype=self.table.dtypes[col])
+        values = validate_values(values, col=self.table[col])
 
         records = [{'row_id': r,
                     'row': {col: v if not pd.isnull(v) else None}} for r, v in zip(row_ids, values)]
