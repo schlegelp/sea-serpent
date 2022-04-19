@@ -1496,9 +1496,7 @@ class LocIndexer:
             where = where.values
 
         # If where is boolean mask fetch the entire frame
-        if isinstance(where, np.ndarray):
-            if where.dtype != bool:
-                raise KeyError('Unable to index by non-boolean iterable')
+        if isinstance(where, np.ndarray) and where.dtype == bool:
             query = create_query(self.table, columns=cols, where=None, limit=limit)
         else:
             query = create_query(self.table, columns=cols, where=where, limit=limit)
@@ -1512,7 +1510,7 @@ class LocIndexer:
         data = data.reindex(make_iterable(cols), axis=1)
 
         # If index was boolean mask subset to requested rows
-        if isinstance(where, np.ndarray):
+        if isinstance(where, np.ndarray) and where.dtype == bool:
             data = data.loc[where].copy()
 
         # If a single row was requested
@@ -1553,9 +1551,19 @@ class LocIndexer:
 
         if is_iterable(where):
             where = np.asarray(where)
-            if where.dtype != bool:
-                raise KeyError('Unable to index by non-boolean iterable')
-            row_ids = self.table.row_ids[where]
+
+            # If boolean series
+            if where.dtype == bool:
+                row_ids = self.table.row_ids[where]
+            else:
+                # Check if these are row IDs
+                is_id = np.isin(where, self.table.row_ids)
+
+                if all(is_id):
+                    row_ids = where
+                else:
+                    raise KeyError('Can only index by boolean iterable or '
+                                   'iterable of row IDs.')
         else:
             row_ids = self[where, '_id'].values
 
@@ -1681,6 +1689,15 @@ def create_query(table, columns=None, where=None, limit=None):
                 q += f' LIMIT {stop}'
         elif isinstance(where, int):
             q += f' LIMIT {where}, 1'
+        elif isinstance(where, str):
+            if where not in table.row_ids:
+                ValueError(f'"{where}" does not appear to be a valid row id')
+            q += f" WHERE _id = '{where}'"
+        elif is_iterable(where):
+            if not all(np.isin(where, table.row_ids)):
+                raise ValueError('Expected iterable to be a list of valid row IDs.')
+            q_str = '("' + '", "'.join(where) + '")'
+            q += f" WHERE _id IN {q_str}"
         else:
             raise TypeError(f'Unable to construct WHERE query from "{type(where)}"')
 
