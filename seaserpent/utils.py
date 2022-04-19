@@ -356,7 +356,10 @@ def validate_dtype(table, column, values):
             return
         elif dtype in ('number', ) and values.dtype.type in NUMERIC_TYPES:
             return
-        elif dtype in ('text', 'long text') and values.dtype.kind == 'U':
+        elif dtype in ('text',
+                       'long text',
+                       'single-select',
+                       'multiple-select') and values.dtype.kind == 'U':
             return
 
     # If list or unknown datattype, bite the bullet and check every value
@@ -366,7 +369,7 @@ def validate_dtype(table, column, values):
             continue
 
         ok = True
-        if dtype in ('text', 'long text'):
+        if dtype in ('text', 'long text', 'single-select', 'multiple-select'):
             if not isinstance(v, str):
                 ok = False
         elif dtype in ('number', ):
