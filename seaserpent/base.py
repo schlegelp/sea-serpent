@@ -17,7 +17,7 @@ from .utils import (process_records, make_records,
                     is_iterable, make_iterable, is_hashable,
                     map_columntype, find_base, write_access,
                     validate_dtype, validate_comparison, validate_table,
-                    validate_values, suppress_print)
+                    validate_values, suppress_print, flatten)
 
 logger = logging.getLogger(__name__)
 logger.setLevel('INFO')
@@ -82,6 +82,8 @@ class Table:
             (self.base,
              self.auth_token,
              self.server) = find_base(base=base,
+                                      server=server,
+                                      auth_token=auth_token,
                                       required_table=table if not isinstance(table, int) else None)
         else:
             self.base = base
