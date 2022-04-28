@@ -70,8 +70,8 @@ def process_records(records, columns=None, row_id_index=True, dtypes=None):
                     Columns. If provided will filter records to only these
                     columns but also fill missing columns with ``None``.
     row_id_index :  bool
-                    Whether to use row IDs as index. If False, will drop
-                    `_row_id` column.
+                    Whether to use row IDs as index (if present). If False,
+                    will keep as `_row_id` column.
     dtypes :        dict, optional
                     Optional SeaTable data types as strings. If provides, will
                     perform some clean-up operations.
@@ -84,6 +84,9 @@ def process_records(records, columns=None, row_id_index=True, dtypes=None):
     assert isinstance(records, list)
 
     if not isinstance(columns, type(None)):
+        # If row ID is requested as index, make sure it's among columns
+        if row_id_index and '_id' not in columns and '_id' in records[0]:
+            columns = list(columns) + ['_id']
         records = [{c: r.get(c, None) for c in columns} for r in records]
 
     df = pd.DataFrame.from_records(records)
@@ -93,7 +96,7 @@ def process_records(records, columns=None, row_id_index=True, dtypes=None):
         df.index.name = 'row_id'
 
     if not isinstance(columns, type(None)):
-        df = df[columns]
+        df = df[[c for c in columns if c in df.columns]]
 
     # Try some clean-up operations
     if isinstance(dtypes, dict):
