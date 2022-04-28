@@ -133,7 +133,7 @@ class Table:
         return self.shape[0]
 
     def __getattr__(self, name):
-        if name not in self.columns:
+        if name not in self.columns and name != '_id':
             # Update meta data
             _ = self.fetch_meta()
 
