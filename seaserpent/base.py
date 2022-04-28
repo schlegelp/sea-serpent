@@ -412,13 +412,13 @@ class Table:
             raise KeyError(f'"{miss}" not among columns')
 
     def _col_ids_to_names(self, ids):
-        """Map column IDs to names."""
+        """Map column IDs to names. Returns `None` if id not found."""
         id_map = {c['key']: c['name'] for c in self.meta['columns']}
 
         if not is_iterable(ids):
-            return id_map[ids]
+            return id_map.get(ids)
 
-        return [id_map[i] for i in ids]
+        return [id_map.get(i, None) for i in ids]
 
     @write_access
     def add_column(self, col_name, col_type, col_data=None, col_options=None):
