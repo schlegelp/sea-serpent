@@ -1172,7 +1172,11 @@ class Column:
 
     def to_series(self):
         """Return this column as pandas.Series."""
-        rows = self.table.query(f'SELECT {self.name}', no_limit=True)
+        if self.name != '_id':
+            query = f'SELECT {self.name}, _id'
+        else:
+            query = f'SELECT {self.name}'
+        rows = self.table.query(query, no_limit=True)
         return process_records(rows,
                                row_id_index=self.name != '_id',
                                dtypes={self.name: self.dtype} if self.table.sanitize else None
