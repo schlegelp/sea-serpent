@@ -607,7 +607,54 @@ class Table:
         if 'success' in r:
             logger.info('Rows successfully deleted!')
 
-    def fetch_logs(self, max_entries=25, max_time=None, unpack=True):
+    def time_machine(self, date, columns=None):
+        """Recreate version of table at a given point in time.
+
+        Important: this is work in progress and does currently not revert
+        deleted or added columns/rows!
+
+        Parameters
+        ----------
+        date :          dt.date | dt.datetime
+                        Time to go back to.
+
+        Returns
+        -------
+        pandas.DataFrame
+
+        """
+        # Convert date to datetime
+        if isinstance(date, dt.date):
+            date = dt.datetime(date.year, date.month, date.day)
+
+        if date >= dt.datetime.now():
+            raise ValueError('Time travel only works backwards, not into the '
+                             'future!')
+
+        logs = self.fetch_logs(max_time=date, unpack=True)
+
+        if not columns:
+            columns = self.columns
+
+        if '_id' not in columns:
+            columns = np.append(columns, '_id')
+
+        # Grab the table
+        table = self[columns]
+
+        # Only keep the oldest log entry for each row/col
+        logs = logs.drop_duplicates(['row_id', 'column'], keep='last')
+
+        # Drop
+        logs = logs[logs.row_id.isin(table.index.values) & logs.column.isin(table.columns)]
+
+        for i, row in logs.iterrows():
+            if isinstance(row.old_value, dict):
+                row.old_value = row.old_value['text']
+
+            table.loc[row.row_id, row.column] = row.old_value
+
+        return table
 
     def fetch_logs(self, max_entries=25, max_time=None, unpack=True, progress=True):
         """Fetch activity logs for this table.
