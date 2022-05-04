@@ -608,18 +608,19 @@ class Table:
             logger.info('Rows successfully deleted!')
 
     def fetch_logs(self, max_entries=25, max_time=None, unpack=True):
+
+    def fetch_logs(self, max_entries=25, max_time=None, unpack=True, progress=True):
         """Fetch activity logs for this table.
 
         Parameters
         ----------
         max_entries :   int
                         Maximum number of logs to return. Set to ``None`` to
-                        fetch all logs (may take a while). Since  we fetch 25
-                        entries in one go, we might overshoot this value.
+                        fetch all logs (may take a while). Ignored if
+                        ``max_time`` is given.
         max_time :      dt.date | dt.datetime
-                        Max time to go back to. Max entries still applies! To
-                        make sure you get to go all the way back, set
-                        max_entries to ``None``.
+                        Max time to go back to. If ``max_time`` is given,
+                        ``max_entries`` is ignored!
         unpack :        bool
                         If False, each row represents an operation on multiple
                         rows/values. If True, each row will represent an edit
@@ -637,46 +638,71 @@ class Table:
 
         # Convert datetime to timestamp
         if isinstance(max_time, dt.datetime):
+            total = (dt.datetime.now() - max_time).days
             max_time = int(dt.datetime.timestamp(max_time) * 1e3)
+            now = int(dt.datetime.timestamp(dt.datetime.now()) * 1e3)
+            max_entries = None
+        elif max_entries:
+            total = max_entries
+        else:
+            total = None
 
         entries = 0
         page = 1
         logs = []
-        while True:
-            url = (f"{self.server}/dtable-server/api/v1/dtables/"
-                   f"{self.base.dtable_uuid}/operations/"
-                   f"?page={page}&per_page=25")  # per_page seems to be hard-coded
-            r = requests.get(url, headers=self.base.headers)
-            r.raise_for_status()
 
-            data = r.json()['operations']
+        with tqdm(desc='Fetching logs',
+                  total=total,
+                  leave=False,
+                  disable=not progress) as pbar:
+            while True:
+                url = (f"{self.server}/dtable-server/api/v1/dtables/"
+                       f"{self.base.dtable_uuid}/operations/"
+                       f"?page={page}&per_page=25")  # per_page seems to be hard-coded
+                r = requests.get(url, headers=self.base.headers)
+                r.raise_for_status()
 
-            # Stop if no more pages
-            if not data:
-                break
+                data = r.json()['operations']
 
-            # Create DataFrame
-            logs.append(pd.DataFrame.from_records(data))
+                # Stop if no more pages
+                if not data:
+                    break
 
-            # Parse op dictionary
-            logs[-1]['operation'] = logs[-1].operation.map(json.loads)
+                # Create DataFrame
+                logs.append(pd.DataFrame.from_records(data))
 
-            # Drop irrelevant entries
-            table = logs[-1].operation.map(lambda x: x.get('table_id', None))
-            logs[-1] = logs[-1][table == self.id]
+                # Parse op dictionary
+                logs[-1]['operation'] = logs[-1].operation.map(json.loads)
 
-            entries += logs[-1].shape[0]
+                # Drop irrelevant entries
+                table = logs[-1].operation.map(lambda x: x.get('table_id', None))
+                logs[-1] = logs[-1][table == self.id]
 
-            if max_entries and entries >= max_entries:
-                break
+                entries += logs[-1].shape[0]
 
-            if max_time and logs[-1].op_time.values[-1] <= max_time:
-                break
+                if max_entries:
+                    pbar.update(logs[-1].shape[0])
+                    if entries >= max_entries:
+                        break
 
-            page += 1
+                if max_time:
+                    # Get the days we went back
+                    days = (now - logs[-1].op_time.values[-1]) / 1e3 / 86_400
+                    diff = int(days - pbar.n)
+                    if diff:
+                        pbar.update(diff)
+                    if logs[-1].op_time.values[-1] <= max_time:
+                        break
+
+                page += 1
 
         # Combine
         logs = pd.concat(logs, axis=0)
+
+        if max_time:
+            logs = logs[logs.op_time >= max_time]
+        elif max_entries:
+            logs = logs.iloc[:max_entries].copy()
 
         # Some clean-up:
         # Extract/parse relevant values
