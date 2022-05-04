@@ -1504,7 +1504,7 @@ class LocIndexer:
         limit = None
         if type(key) is tuple:
             if len(key) == 1:
-                where, cols = key, self.table.columns
+                where, cols = key, '*'
             elif len(key) == 2:
                 where, cols = key
             elif len(key) == 3:
@@ -1514,7 +1514,7 @@ class LocIndexer:
             else:
                 raise IndexError(f'Unable to use indexer "{key}"')
         else:
-            where, cols = key, self.table.columns
+            where, cols = key, '*'
 
         if isinstance(where, pd.Series):
             where = where.values
@@ -1531,7 +1531,11 @@ class LocIndexer:
                                dtypes=self.table.dtypes.to_dict() if self.table.sanitize else None)
 
         # Reindex columns so that we have columns even if data is empty
-        data = data.reindex(make_iterable(cols), axis=1)
+        if cols != '*':
+            data = data.reindex(make_iterable(cols), axis=1)
+        else:
+            # This sorts columns like in the UI
+            data = data.reindex(self.table.columns, axis=1)
 
         # If index was boolean mask subset to requested rows
         if isinstance(where, np.ndarray) and where.dtype == bool:
@@ -1542,7 +1546,7 @@ class LocIndexer:
             data = data.iloc[0]
 
         # If a single column was requested
-        if isinstance(cols, str):
+        if isinstance(cols, str) and cols != '*':
             data = data[cols]
 
         return data
@@ -1670,7 +1674,7 @@ def create_query(table, columns=None, where=None, limit=None):
         raise TypeError('Unable to construct WHERE query with limit and slice '
                         'as index')
 
-    if not isinstance(columns, type(None)):
+    if not isinstance(columns, type(None)) and columns != '*':
         columns = make_iterable(columns).astype(str)
         if len(columns) == 1:
             q = f'SELECT {columns[0]}'
