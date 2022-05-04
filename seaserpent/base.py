@@ -1222,6 +1222,10 @@ class Column:
 
         if not resp.get('success'):
             raise ValueError(f'Error writing to table: {resp}')
+
+        # Update table meta data
+        _ = self.table.fetch_meta()
+
         logger.info(f'Column "{self.name}" deleted.')
 
     def contains(self, pat):
@@ -1352,6 +1356,9 @@ class Column:
 
         logger.info(f'Column renamed: {self.name} -> {self.new_name}')
 
+        # Update table meta data
+        _ = self.table.fetch_meta()
+
         self.name = new_name
 
     def unique(self):
@@ -1422,6 +1429,9 @@ class Column:
             payload = options
 
         self.table.base.add_column_options(self.table.name, self.name, payload)
+
+        # Update table meta data
+        _ = self.table.fetch_meta()
 
         logger.info(f'Added column options: {options}')
 
