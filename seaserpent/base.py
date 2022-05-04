@@ -1121,6 +1121,14 @@ class Column:
             return [c for c in self.table.meta['columns'] if c['name'] == self.name][0]
 
     @property
+    def options(self):
+        """Options for single- or multi-select columns."""
+        if 'select' not in self.dtype:
+            raise TypeError('`options` only exists for single- or multi-select '
+                            'columns')
+        return np.array([r['name'] for r in self.meta['data']['options']])
+
+    @property
     def values(self):
         return self.to_series().values
 
