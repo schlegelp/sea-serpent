@@ -1371,7 +1371,7 @@ class Column:
         ----------
         other :     iterable
         online :    bool | "auto"
-                    Whether to use an "online' Filter query or to download the
+                    Whether to use an "online" Filter query or to download the
                     column and run the isin query offline. The latter
                     makes sense if the `other` contains many thousand of
                     values.
