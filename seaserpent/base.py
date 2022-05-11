@@ -1364,8 +1364,29 @@ class Column:
             raise TypeError(f'`pat` must be str, not "{type(pat)}"')
         return Filter(f"{self.name} LIKE '%{pat}'")
 
-    def isin(self, other):
-        """Filter to values in `other`."""
+    def isin(self, other, online=True):
+        """Filter to values in `other`.
+
+        Parameters
+        ----------
+        other :     iterable
+        online :    bool | "auto"
+                    Whether to use an "online' Filter query or to download the
+                    column and run the isin query offline. The latter
+                    makes sense if the `other` contains many thousand of
+                    values.
+
+        Returns
+        ------
+        Filter
+                    A Filter query (if online=True).
+        pandas.Series
+                    A boolean series.
+
+        """
+        if isinstance(other, pd.Series):
+            other = other.values
+
         if not is_iterable(other):
             return self == other
 
@@ -1375,9 +1396,13 @@ class Column:
             return self == other[0]
 
         _ = validate_comparison(self, other, allow_iterable=True)
-        other = tuple(other)
 
-        return Filter(f"{self.name} IN {str(other)}")
+        if online:
+            other = tuple(other)
+
+            return Filter(f"{self.name} IN {str(other)}")
+        else:
+            return self.to_series().isin(other)
 
     def isnull(self, empty_str=True):
         """Filter for NULL.
