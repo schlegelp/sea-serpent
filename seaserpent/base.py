@@ -1,7 +1,9 @@
 import logging
 import json
+import jwt
 import numbers
 import requests
+import time
 import warnings
 
 import datetime as dt
@@ -17,7 +19,7 @@ from .utils import (process_records, make_records,
                     is_iterable, make_iterable, is_hashable,
                     map_columntype, find_base, write_access,
                     validate_dtype, validate_comparison, validate_table,
-                    validate_values, suppress_print, flatten)
+                    validate_values, flatten, check_token)
 from .patch import SeaTableAPI, Account
 
 logger = logging.getLogger(__name__)
@@ -80,15 +82,20 @@ class Table:
 
         # Find base and table
         if not isinstance(base, SeaTableAPI):
-            (self.base,
+            (self.workspace_id,
+             self.base_name,
              self.auth_token,
              self.server) = find_base(base=base,
                                       server=server,
                                       auth_token=auth_token,
                                       required_table=table if not isinstance(table, int) else None)
+            # This sets/refreshes self.base
+            self.auth()
         else:
             self.base = base
             self.server = base.server_url
+            self.base_name = base.dtable_name
+            self.workspace_id = base.workspace_id
             self.auth_token = None
 
         if isinstance(table, int):
@@ -169,6 +176,7 @@ class Table:
                                dtypes=self.dtypes.to_dict() if self.sanitize else None)
 
     @write_access
+    @check_token
     def __setitem__(self, key, values):
         if not is_hashable(key):
             raise KeyError('Key must be hashable (i.e. a single column). Use '
@@ -421,7 +429,23 @@ class Table:
 
         return [id_map.get(i, None) for i in ids]
 
+    def _token_time_left(self):
+        """Time left before token expires [s]."""
+        decoded = jwt.decode(self.base.jwt_token, algorithms=['HS256'],
+                             options={"verify_signature": False})
+
+        return int(decoded['exp']) - int(time.time())
+
+    def auth(self):
+        """Authenticate."""
+        account = Account(None, None, self.server)
+        account.token = self.auth_token
+
+        # Initialize the base
+        self.base = account.get_base(self.workspace_id, self.base_name)
+
     @write_access
+    @check_token
     def add_column(self, col_name, col_type, col_data=None, col_options=None):
         """Add new column to table.
 
@@ -472,6 +496,7 @@ class Table:
         logger.info(f'Column "{col_name}" ({col_type}) added.')
 
     @write_access
+    @check_token
     def add_linked_column(self, col_name, link_col, link_on, formula='lookup'):
         """Add linked column to table.
 
@@ -534,6 +559,7 @@ class Table:
         logger.info(f'Linked column "{col_name}" added.')
 
     @write_access
+    @check_token
     def append(self, other):
         """Append rows of `other` to the end of this table.
 
@@ -571,6 +597,7 @@ class Table:
             logger.info('Rows successfully added!')
 
     @write_access
+    @check_token
     def delete_rows(self, rows):
         """Delete given rows.
 
@@ -655,6 +682,7 @@ class Table:
 
         return table
 
+    @check_token
     def fetch_logs(self, max_entries=25, max_time=None, unpack=True, progress=True):
         """Fetch activity logs for this table.
 
@@ -815,6 +843,7 @@ class Table:
 
         return logs
 
+    @check_token
     def fetch_meta(self):
         """Fetch/update meta data for table and base."""
         self.base_meta = self.base.get_metadata()
@@ -830,6 +859,7 @@ class Table:
 
         return meta[0]
 
+    @check_token
     def get_view(self, view, hide_cols=True, sort=True):
         """Download given view of tthe table.
 
@@ -944,6 +974,7 @@ class Table:
                                dtypes=self.dtypes.to_dict() if self.sanitize else None)
 
     @write_access
+    @check_token
     def link(self, other_table, link_on=None, link_on_other=None,
              link_col=None, multi_match=True):
         """Link rows in this table to rows in other table.
@@ -1047,6 +1078,7 @@ class Table:
                                row_id_index=row_id_index,
                                dtypes=self.dtypes.to_dict() if self.sanitize else None)
 
+    @check_token
     def query(self, query, no_limit=False, convert=True):
         """Run SQL query against this table.
 
@@ -1265,6 +1297,7 @@ class Column:
                                ).iloc[:, 0]
 
     @write_access
+    @check_token
     def clear(self):
         """Clear this column."""
         if not self.key:
@@ -1284,6 +1317,7 @@ class Column:
             logger.info('Clear successful!')
 
     @write_access
+    @check_token
     def delete(self):
         """Delete this column."""
         if not self.key:
@@ -1400,6 +1434,7 @@ class Column:
         return self.to_series().map(arg, na_action=na_action)
 
     @write_access
+    @check_token
     def rename(self, new_name):
         """Rename column.
 
@@ -1624,6 +1659,7 @@ class LocIndexer:
         return data
 
     @write_access
+    @check_token
     def __setitem__(self, key, values):
         if not isinstance(key, tuple):
             if isinstance(values, pd.DataFrame):

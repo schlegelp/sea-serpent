@@ -230,7 +230,8 @@ def find_base(base=None, required_table=None, auth_token=None, server=None):
 
     Returns
     -------
-    base :              seatable_api.main.SeaTableAPI
+    workspace_id :      int
+    base_name :         str
     auth_token :        str
     server :            str
 
@@ -298,10 +299,9 @@ def find_base(base=None, required_table=None, auth_token=None, server=None):
     elif len(bases) > 1:
         raise ValueError(f'Found multiple matching bases. Please be more specific.')
 
-    # Initialize the base
-    base = account.get_base(*bases[0])
+    workspace_id, base_name = bases[0]
 
-    return base, auth_token, server
+    return workspace_id, base_name, auth_token, server
 
 
 def write_access(func):
@@ -319,6 +319,26 @@ def write_access(func):
             raise ValueError('Table is read-only to prevent accidental edits. '
                              'Please initialize with `read_only=False` to allow '
                              'writing to it.')
+        return func(*args, **kwargs)
+    return inner
+
+
+def check_token(func):
+    """Decorator to check if token is expired and refresh if needed."""
+    @functools.wraps(func)
+    def inner(*args, **kwargs):
+        self = args[0]
+
+        # If this is not the table itself (i.e. the Column or the index),
+        # get the actual table
+        if not 'Table' in str(type(self)):
+            self = self.table
+
+        # If less than a minute to go, refresh base
+        if self._token_time_left() <= 60:
+            logger.info('Refreshing Java Web token.')
+            self.auth()
+
         return func(*args, **kwargs)
     return inner
 
