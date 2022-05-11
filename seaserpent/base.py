@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 
 from functools import partial
-from seatable_api.main import SeaTableAPI
+#from seatable_api.main import SeaTableAPI
 from seatable_api.constants import ColumnTypes
 from tqdm.auto import trange, tqdm
 
@@ -18,6 +18,7 @@ from .utils import (process_records, make_records,
                     map_columntype, find_base, write_access,
                     validate_dtype, validate_comparison, validate_table,
                     validate_values, suppress_print, flatten)
+from .patch import SeaTableAPI, Account
 
 logger = logging.getLogger(__name__)
 logger.setLevel('INFO')
@@ -120,8 +121,6 @@ class Table:
 
         # Maximum number of operations (e.g. edits) per batch
         self.max_operations = max_operations
-
-        self.base.query = suppress_print(self.base.query)
 
     def __array__(self, dtype=None):
          return np.array(self.values, dtype=dtype)

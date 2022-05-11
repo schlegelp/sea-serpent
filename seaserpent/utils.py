@@ -9,7 +9,8 @@ import datetime as dt
 import numpy as np
 import pandas as pd
 
-from seatable_api import Account
+#from seatable_api import Account
+from .patch import Account
 from seatable_api.constants import ColumnTypes
 
 
