@@ -570,6 +570,9 @@ class Table:
         other :     pandas.DataFrame
 
         """
+        if isinstance(other, Table):
+            other = other.to_frame()
+
         if not isinstance(other, pd.DataFrame):
             raise TypeError(f'`other` must be DataFrame, got "{type(other)}"')
 
