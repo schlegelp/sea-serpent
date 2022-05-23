@@ -398,7 +398,16 @@ class Table:
 
         """
         # Find the base
-        base, token, server = find_base(base, auth_token=auth_token, server=server)
+        (workspace_id,
+         base_name,
+         auth_token,
+         server) = find_base(base=base,
+                             server=server,
+                             auth_token=auth_token)
+        account = Account(None, None, server)
+        account.token = auth_token
+        # Initialize the base
+        base = account.get_base(workspace_id, base_name)                      
 
         existing_tables = base.get_metadata()['tables']
         existing_names = [t['name'] for t in existing_tables]
