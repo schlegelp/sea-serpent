@@ -499,9 +499,10 @@ def validate_values(values, col=None):
                             f'numpy.datetime64 objects. Got {values.dtype}.')
     elif col.dtype in ('single-select', 'multiple-select'):
         options = [o['name'] for o in col.meta['data']['options']]
-        not_options = ~np.isin(values, options)
+        not_none = [values != None]  # None is never in options
+        not_options = ~np.isin(values[not_none], options)
         if any(not_options):
-            miss = np.unique(values[not_options]).astype(str).tolist()
+            miss = np.unique(values[not_none][not_options]).astype(str).tolist()
             logger.warning('Some of the values to write are not currently '
                            f'among options for column "{col.name}" ({col.dtype}):'
                            f' {", ".join(miss)}.\nThese will be added '
