@@ -44,7 +44,11 @@ COLUMN_TYPES = {
 NUMERIC_TYPES = (numbers.Number, int, float,
                  np.int0, np.int8, np.int16, np.int32, np.int64, np.integer,
                  np.uint, np.uint0, np.uint8, np.uint16, np.uint32, np.uint64,
-                 np.float16, np.float32, np.float64, np.float128, np.floating)
+                 np.float16, np.float32, np.float64, np.floating)
+
+# 128bit floats are not avavailable on all systems
+if hasattr(np, 'float128'):
+    NUMERIC_TYPES = tuple(list(NUMERIC_TYPES) + [np.float128])
 
 
 def map_columntype(x):
