@@ -407,7 +407,7 @@ class Table:
         account = Account(None, None, server)
         account.token = auth_token
         # Initialize the base
-        base = account.get_base(workspace_id, base_name)                      
+        base = account.get_base(workspace_id, base_name)
 
         existing_tables = base.get_metadata()['tables']
         existing_names = [t['name'] for t in existing_tables]
@@ -644,6 +644,38 @@ class Table:
 
         if 'success' in r:
             logger.info('Rows successfully deleted!')
+
+    @write_access
+    @check_token
+    def delete(self, skip_confirmation=False):
+        """Danger! Delete this table.
+
+        Parameters
+        ----------
+        skip_confirmation : bool
+                            If True, will skip confirmation.
+
+        """
+        if not skip_confirmation:
+            if input(f'Delete table "{self.name}" '
+                     f'in "{self.base.dtable_name}"? [y/n]').lower() != 'y':
+                return
+
+        url = self.base._table_server_url()
+
+        json_data = {
+                    'table_name': self.name
+                }
+        r = requests.delete(url,
+                            json=json_data,
+                            headers=self.base.headers,
+                            timeout=self.base.timeout)
+        r.raise_for_status()
+
+        if 'success' in r.content.decode():
+            logger.info('Table successfully deleted!')
+        else:
+            logger.warning(f'Something went wrong: {r.content.decode()}')
 
     def time_machine(self, date, columns=None):
         """Recreate version of table at a given point in time.

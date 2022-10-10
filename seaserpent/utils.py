@@ -114,7 +114,7 @@ def process_records(records, columns=None, row_id_index=True, dtypes=None):
                 df[c] = df[c].astype(bool, copy=False, errors='ignore')
             elif dt == 'number':
                 # Manually cleared cells will unfortunately return an empty
-                # str ('') as value instead of just no value at all...
+                # str ('') as value instead of just no value at all...                
                 if df[c].dtype == 'O':
                     # Set empty strings to None
                     df.loc[df[c] == '', c] = None
