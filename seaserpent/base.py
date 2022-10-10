@@ -219,7 +219,7 @@ class Table:
 
     def __repr__(self):
         shape = self.shape
-        return f'SeaTable <"{self.name}", {shape[0]} rows, {shape[1]} columns>'
+        return f'SeaTable <"{self.name}" ({self.base.dtable_name}), {shape[0]} rows, {shape[1]} columns>'
 
     @property
     def collaborators(self):
