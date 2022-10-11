@@ -114,7 +114,7 @@ def process_records(records, columns=None, row_id_index=True, dtypes=None):
                 df[c] = df[c].astype(bool, copy=False, errors='ignore')
             elif dt == 'number':
                 # Manually cleared cells will unfortunately return an empty
-                # str ('') as value instead of just no value at all...                
+                # str ('') as value instead of just no value at all...
                 if df[c].dtype == 'O':
                     # Set empty strings to None
                     df.loc[df[c] == '', c] = None
@@ -214,6 +214,44 @@ def validate_comparison(column, other, allow_iterable=False):
     raise TypeError(f'Unable to compare column of type "{column.dtype}" with "{type(other)}"')
 
 
+def get_account(auth_token=None, server=None):
+    """Initialize SeaTable Account.
+
+    Parameters
+    ----------
+    auth_token :        str, optional
+                        Your user's auth token (not the base token). Can either
+                        provided explicitly or be set as ``SEATABLE_TOKEN``
+                        environment variable.
+    server :            str, optional
+                        Must be provided explicitly or set as ``SEATABLE_SERVER``
+                        environment variable.
+
+    Returns
+    -------
+    Account
+
+    """
+    if not server:
+        server = os.environ.get('SEATABLE_SERVER')
+
+    if not auth_token:
+        auth_token = os.environ.get('SEATABLE_TOKEN')
+
+    if not server:
+        raise ValueError('Must provide `server` or set `SEATABLE_SERVER` '
+                         'environment variable')
+    if not auth_token:
+        raise ValueError('Must provide either `auth_token` or '
+                         'set `SEATABLE_TOKEN` environment variable')
+
+    # Initialize Account
+    account = Account(None, None, server)
+    account.token = auth_token
+
+    return account
+
+
 def find_base(base=None, required_table=None, auth_token=None, server=None):
     """Find a base matching some parameters.
 
@@ -243,22 +281,7 @@ def find_base(base=None, required_table=None, auth_token=None, server=None):
     if isinstance(required_table, type(None)) and isinstance(base, type(None)):
         raise ValueError('`base` and `required_table` must not both be `None`')
 
-    if not server:
-        server = os.environ.get('SEATABLE_SERVER')
-
-    if not auth_token:
-        auth_token = os.environ.get('SEATABLE_TOKEN')
-
-    if not server:
-        raise ValueError('Must provide `server` or set `SEATABLE_SERVER` '
-                         'environment variable')
-    if not auth_token:
-        raise ValueError('Must provide either `auth_token` or '
-                         'set `SEATABLE_TOKEN` environment variable')
-
-    # Initialize Account
-    account = Account(None, None, server)
-    account.token = auth_token
+    account = get_account(server=server, auth_token=auth_token)
 
     # Now find the base
     workspaces = account.list_workspaces()['workspace_list']
