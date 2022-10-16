@@ -281,6 +281,12 @@ def find_base(base=None, required_table=None, auth_token=None, server=None):
     if isinstance(required_table, type(None)) and isinstance(base, type(None)):
         raise ValueError('`base` and `required_table` must not both be `None`')
 
+    if not server:
+        server = os.environ.get('SEATABLE_SERVER')
+
+    if not auth_token:
+        auth_token = os.environ.get('SEATABLE_TOKEN')     
+
     account = get_account(server=server, auth_token=auth_token)
 
     # Now find the base
