@@ -899,9 +899,18 @@ class Table:
         elif len(meta) > 1:
             raise ValueError(f'Multiple tables with name "{self.name}" in base')
 
-        self._meta = meta[0]
+        meta = meta[0]
 
-        return meta[0]
+        # Check for duplicate columns
+        seen = []
+        for col in meta.get('columns', []):
+            if col['name'] in seen:
+                raise ValueError(f'Table {self.name} contains duplicate '
+                                 f'column(s): {col["name"]}')
+            seen.append(col['name'])
+
+        self._meta = meta
+        return self._meta
 
     @check_token
     def get_view(self, view, hide_cols=True, sort=True):
