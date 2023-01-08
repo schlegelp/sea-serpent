@@ -730,30 +730,58 @@ class Table:
 
     @write_access
     @check_token
-    def delete_rows(self, rows):
+    def delete_rows(self, rows, skip_confirmation=False):
         """Delete given rows.
 
         Parameters
         ----------
-        rows :      int | iterable
-                    Either a single row ID, a list of row IDs or a boolean
-                    array of the same length as the table. IMPORTANT: this
-                    expects Python indices, i.e. the first row will have index
-                    0 (by contrast, the first row in in SeaTable has index 1)!
+        rows :      int | str | iterable | Filter
+                    Can be either:
+                     - single integer or list thereof is intepreted as indices
+                       IMPORTANT: this expects Python indices, i.e. the
+                       first row has index index 0 (not 1)
+                     - single str or list thereof is intepreted as row ID(s)
+                     - an array of booleans is interpreted as mask and rows where
+                       the value is True will be deleted
+                     - a Filter query
+        skip_confirmation : bool
+                    If True, will skip confirmation.
 
         """
-        if isinstance(rows, int):
+        if isinstance(rows, (int, str)):
             rows = [rows]
 
-        rows = np.asarray(rows)
+        if isinstance(rows, Filter):
+            rows = self.loc[rows, '_id'].values.astype(str)
 
-        if rows.dtype != bool:
-            rows = rows.astype(int)
-        elif len(rows) != len(self):
-            raise ValueError(f'Length of boolean array ({len(rows)}) does not '
-                             f'match that of table ({len(self)})')
+        # Pandas Boolean arrays are a specia datatype which is annoying
+        # because they get converted to `object` by np.asarray by default
+        if isinstance(rows, pd.core.arrays.boolean.BooleanArray):
+            rows = np.asarray(rows, dtype=bool)
+        else:
+            rows = np.asarray(rows)
 
-        row_ids = self.row_ids[rows]
+        if rows.dtype.kind == 'U':
+            miss = ~np.isin(rows, self.row_ids)
+            if any(miss):
+                raise ValueError('Some of the provided row IDs do not appear '
+                                 f'to exist: {rows[miss]}')
+            row_ids = rows
+        elif rows.dtype in (np.int64, np.int32):
+            row_ids = self.row_ids[rows]
+        elif rows.dtype == bool:
+            if len(rows) != len(self):
+                raise ValueError(f'Length of boolean array ({len(rows)}) does not '
+                                 f'match that of table ({len(self)})')
+            row_ids = self.row_ids[rows]
+        else:
+            raise TypeError('Unable to determine which rows to delete from data '
+                            f'of type "{rows.dtype}"')
+
+        if not skip_confirmation:
+            if input(f'Delete {len(row_ids)} rows in table "{self.name}" '
+                     f'in base "{self.base.dtable_name}"? [y/n]').lower() != 'y':
+                return
 
         r = batch_upload(partial(self.base.batch_delete_rows, self.name),
                          row_ids.tolist(),
