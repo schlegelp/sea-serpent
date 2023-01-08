@@ -297,22 +297,25 @@ class Table:
 
     @classmethod
     def from_frame(cls, df, table_name, base, id_col=0, auth_token=None, server=None):
-        """Create a new table from pandas DataFrame.
+        """Create a new table from dataframe.
 
         Parameters
         ----------
-        df :            pandas.DataFrame
-                        DataFrame to export to SeaTable. Datatypes are inferred:
-                          - object -> text
+        df :            pandas.DataFrame | seaserpent.Table
+                        Table to export to SeaTable. For pandas.DataFramess the
+                        data types are inferred as follows:
+                          - object or string -> text
                           - int, float -> number
                           - bool -> check box
-                          - categorical -> single select
+                          - categorical -> single-select
+                          - lists (object) -> multiple-select
         table_name :    str
                         Name of the new table.
         base :          str | int
                         Name or ID of base.
         id_col :        str | int
-                        Name or index of the ID column to use.
+                        Name or index of the ID column to use. Ignored if input
+                        is `seaserpent.Table`
 
         Returns
         -------
@@ -320,6 +323,13 @@ class Table:
                         Will be initialized with `read_only=False`.
 
         """
+        if isinstance(df, Table):
+            return cls._from_ss_table(df,
+                                      table_name=table_name,
+                                      base=base,
+                                      auth_token=auth_token,
+                                      server=server)
+
         # Some sanity checks
         if len(df.columns) < len(np.unique(df.columns)):
             raise ValueError('Table must not contain duplicate column names')
