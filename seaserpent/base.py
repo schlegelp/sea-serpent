@@ -1036,6 +1036,179 @@ class Table:
         return logs
 
     @check_token
+    def fetch_row_logs(self, ids, max_entries=25, max_time=None, unpack=True, progress=True):
+        """Fetch activity logs for given row(s).
+
+        Parameters
+        ----------
+        ids :           str | iterable | pandas.DataFrame
+                        Row IDs to fetch logs for. Can be:
+                          - a single row ID (e.g. "M9MzMmdRQdC5X-aP5qRSxg")
+                          - list of the above
+                          - a DataFrame where the index contains row IDs
+        max_entries :   int
+                        Maximum number of logs to return. Set to ``None`` to
+                        fetch all logs (may take a while). Ignored if
+                        ``max_time`` is given.
+        max_time :      dt.date | dt.datetime
+                        Max time to go back to. If ``max_time`` is given,
+                        ``max_entries`` is ignored!
+        unpack :        bool
+                        If False, each row represents an operation on multiple
+                        rows/values. If True, each row will represent an edit
+                        to a single value. This will drop anything that isn't
+                        a "modify_rows" operation!
+
+        Returns
+        -------
+        pandas.DataFrame
+
+        """
+        # Convert date to datetime
+        if isinstance(max_time, dt.date):
+            max_time = dt.datetime(max_time.year, max_time.month, max_time.day)
+
+        # Convert datetime to timestamp
+        if isinstance(max_time, dt.datetime):
+            total = (dt.datetime.now() - max_time).days
+            max_time = int(dt.datetime.timestamp(max_time) * 1e3)
+            now = int(dt.datetime.timestamp(dt.datetime.now()) * 1e3)
+            max_entries = None
+        elif max_entries:
+            total = max_entries
+        else:
+            total = None
+
+        if isinstance(ids, str):
+            ids = [ids]
+        elif isinstance(ids, pd.DataFrame):
+            ids = ids.index.values
+
+        logs = []
+        for i in tqdm(ids, leave=False, disable=not_progress, desc='Rows'):
+            with tqdm(desc='Fetching logs',
+                      total=total,
+                      leave=False,
+                      disable=not progress) as pbar:
+                entries = 0
+                page = 1
+                while True:
+                    url = (f"{self.server}/dtable-server/api/v1/dtables/"
+                           f"{self.base.dtable_uuid}/activities/"
+                           f"?row_id={i}&page={page}&per_page=25")  # per_page seems to be hard-coded
+                    r = requests.get(url, headers=self.base.headers)
+                    r.raise_for_status()
+
+                    data = r.json()['activities']
+
+                    # Stop if no more pages
+                    if not data:
+                        break
+
+                    # Create DataFrame
+                    logs.append(pd.DataFrame.from_records(data))
+
+                    # Parse op dictionary
+                    logs[-1]['activities'] = logs[-1].operation.map(json.loads)
+
+                    # Drop irrelevant entries
+                    table = logs[-1].operation.map(lambda x: x.get('table_id', None))
+                    logs[-1] = logs[-1][table == self.id]
+
+                    entries += logs[-1].shape[0]
+
+                    if max_entries:
+                        pbar.update(logs[-1].shape[0])
+                        if entries >= max_entries:
+                            break
+
+                    if max_time:
+                        # Get the days we went back
+                        days = (now - logs[-1].op_time.values[-1]) / 1e3 / 86_400
+                        diff = int(days - pbar.n)
+                        if diff:
+                            pbar.update(diff)
+                        if logs[-1].op_time.values[-1] <= max_time:
+                            break
+
+                    page += 1
+
+        return logs
+
+        # Combine
+        logs = pd.concat(logs, axis=0)
+
+        if max_time:
+            logs = logs[logs.op_time >= max_time]
+        elif max_entries:
+            logs = logs.iloc[:max_entries].copy()
+
+        # Some clean-up:
+        # Extract/parse relevant values
+        logs['op_time'] = (logs.op_time / 1e3).map(dt.datetime.fromtimestamp)
+        logs['op_type'] = logs.operation.map(lambda x: x['op_type']).astype('category')
+
+        users = self.collaborators.set_index('email').name.to_dict()
+        logs.insert(0, 'user', logs.author.map(users))
+        logs['user'] = logs['user'].astype('category')
+        logs.drop('author', inplace=True, axis=1)
+
+        logs['rows_modified'] = logs.operation.map(lambda x: len(x.get('row_ids', [])))
+        logs.loc[logs.op_type == 'modify_row', 'rows_modified'] = 1
+
+        col = logs.pop('operation')
+        logs['details'] = col
+
+        def clean_details(x):
+            """Run some clean up on the details column."""
+            # Pop some values we don't need (anymore)
+            _ = x.pop('table_id', '')
+            _ = x.pop('op_type', '')
+
+            return x
+
+        logs['details'] = logs.details.map(clean_details)
+
+        logs = logs.reset_index(drop=True)
+
+        if unpack:
+            unpacked = []
+            for row in logs[logs.op_type.isin(['modify_rows', 'modify_row'])].itertuples():
+                user = row.user
+                app = row.app
+                op_time = row.op_time
+                op_id = row.op_id
+                op_type = row.op_type
+                details = row.details
+
+                # If single row turn it into a fake multi row edit
+                if row.op_type == 'modify_row':
+                    row_id = details['row_id']
+                    details['row_ids'] = [row_id]
+                    details['updated'] = {row_id: details['updated']}
+                    details['old_rows'] = {row_id: details['old_row']}
+
+                for id in details['row_ids']:
+                    for col, new_value in details['updated'][id].items():
+                        # Skip internal columns like '_last_modifier'
+                        if col.startswith('_'):
+                            continue
+                        old_value = details['old_rows'][id].get(col, None)
+                        unpacked.append([user, app, op_time, op_id,
+                                         id, col, old_value, new_value])
+
+            logs = pd.DataFrame(unpacked,
+                                columns=['user', 'app', 'op_time', 'op_id',
+                                         'row_id', 'column',
+                                         'old_value', 'new_value'])
+
+            logs['column'] = self._col_ids_to_names(logs.column.values)
+            for c in ['user', 'app', 'column']:
+                logs[c] = logs[c].astype('category')
+
+        return logs
+
+    @check_token
     def fetch_meta(self):
         """Fetch/update meta data for table and base."""
         self.base_meta = self.base.get_metadata()
@@ -1696,6 +1869,34 @@ class Column:
         _ = self.table.fetch_meta()
 
         self.name = new_name
+
+    @write_access
+    @check_token
+    def resize(self, width):
+        """Resize column.
+
+        Parameters
+        ----------
+        width :     int
+                    The new width of the column.
+
+        """
+        try:
+            width = int(width)
+        except ValueError:
+            raise TypeError(f'New width must be integer, not "{type(width)}"')
+        except BaseException:
+            raise
+
+        resp = self.table.base.resize_column(self.table.name,
+                                             self.key,
+                                             width)
+        self.table._stale = True
+
+        if 'name' not in resp:
+            raise ValueError(f'Error writing to table: {resp}')
+
+        logger.debug(f'Column {self.name} resized.')
 
     def unique(self):
         """Return unique values in this column."""
