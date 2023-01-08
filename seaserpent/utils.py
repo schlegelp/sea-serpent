@@ -22,7 +22,7 @@ COLUMN_TYPES = {
     (str, 'S', 'str', 'text'): ColumnTypes.TEXT,                                # text
     ('long text', ): ColumnTypes.LONG_TEXT,                                     # long text
     (bool, 'b', 'bool', 'checkbox'): ColumnTypes.CHECKBOX,                      # checkbox
-    ('date', ): ColumnTypes.DATE,                                               # date & time
+    ('date', 'M'): ColumnTypes.DATE,                                               # date & time
     ('select', 'single_select',
      pd.CategoricalDtype): ColumnTypes.SINGLE_SELECT,                           # single select
     ('multiple_select', ): ColumnTypes.MULTIPLE_SELECT,                         # multiple select
@@ -122,15 +122,17 @@ def process_records(records, columns=None, row_id_index=True, dtypes=None):
                     df[c] = df[c].astype(float, copy=False, errors='ignore')
             elif dt == 'date':
                 df[c] = pd.to_datetime(df[c])
-            elif dt in ('text', 'long text'):
+            elif dt in ('text', 'long text', 'url'):
                 # Manually cleared cells will return an empty
                 # str ('') as value instead of just no value at all...
                 df.loc[df[c] == '', c] = None
                 df.loc[df[c] == 'None', c] = None
 
-                # If not any ``None`` in there, convert to proper string column
-                if not any(pd.isnull(df[c].values)):
-                    df[c] = df[c].values.astype(str)
+                # Use pandas own string type
+                df[c] = df[c].astype('string')
+            elif dt == 'single-select':
+                df[c] = df[c].astype('string').astype('category')
+
 
     return df
 
@@ -285,7 +287,7 @@ def find_base(base=None, required_table=None, auth_token=None, server=None):
         server = os.environ.get('SEATABLE_SERVER')
 
     if not auth_token:
-        auth_token = os.environ.get('SEATABLE_TOKEN')     
+        auth_token = os.environ.get('SEATABLE_TOKEN')
 
     account = get_account(server=server, auth_token=auth_token)
 
@@ -415,19 +417,24 @@ def validate_dtype(table, column, values):
             return
         elif dtype in ('text',
                        'long text',
-                       'single-select',
-                       'multiple-select') and values.dtype.kind == 'U':
-            return
+                       'single-select'):
+            if values.dtype.kind == 'U':
+                return
+            if values.dtype == 'string[python]':
+                return
 
-    # If list or unknown datattype, bite the bullet and check every value
+    # If list or unknown datatype, bite the bullet and check every value
     for v in values:
         # `None`/`NaN` effectively leads to removal of the value
-        if pd.isnull(v):
+        if not isinstance(v, list) and pd.isnull(v):
             continue
 
         ok = True
-        if dtype in ('text', 'long text', 'single-select', 'multiple-select'):
+        if dtype in ('text', 'long text', 'single-select'):
             if not isinstance(v, str):
+                ok = False
+        elif dtype in ('multiple-select', ):
+            if not isinstance(v, (str, list)):
                 ok = False
         elif dtype in ('number', ):
             if not isinstance(v, numbers.Number):
@@ -492,7 +499,8 @@ def validate_values(values, col=None):
     # Dates must be given as strings "YEAR-MONTH-DAY HOUR:MINUTE:SECONDS"
     if col.dtype == 'date':
         # If object type make sure each value is converted correctly
-        if values.dtype == 'O':
+        # "string[python]" is pandas' string type
+        if values.dtype in ('O', 'string[python]'):
             # Do not use np.isnan here!
             not_nan = values != None
 
@@ -531,16 +539,28 @@ def validate_values(values, col=None):
                             '"2021-10-01 10:10"), or as datetime or '
                             f'numpy.datetime64 objects. Got {values.dtype}.')
     elif col.dtype in ('single-select', 'multiple-select'):
-        options = [o['name'] for o in col.meta['data']['options']]
-        not_none = [values != None]  # None is never in options
-        not_options = ~np.isin(values[not_none], options)
+        if col.meta['data']['options']:
+            options = [o['name'] for o in col.meta['data']['options']]
+        else:
+            options = []
+        not_none = ~pd.isnull(values)  # None is never in options
+
+        if col.dtype == 'multiple-select':
+            unpacked = [v for l in values[not_none] for v in l]
+        else:
+            unpacked = values[not_none]
+
+        unpacked = np.unique(unpacked)
+        not_options = ~np.isin(unpacked, options)
         if any(not_options):
-            miss = np.unique(values[not_none][not_options]).astype(str).tolist()
+            miss = unpacked[not_options].astype(str).tolist()
             logger.warning('Some of the values to write are not currently '
                            f'among options for column "{col.name}" ({col.dtype}):'
                            f' {", ".join(miss)}.\nThese will be added '
                            'automatically but you will need to refresh the '
                            'website for them to show up.')
+            # Make sure we're fetching meta data again
+            col.table._stale = True
 
     return values.tolist()
 
@@ -563,9 +583,17 @@ def make_records(table):
     """
     records = table.to_dict(orient='records')
 
-    records = [{k: v for k, v in r.items() if not pd.isnull(v)} for r in records]
+    records = [{k: v for k, v in r.items() if list_or_not_null(v)} for r in records]
 
     return records
+
+
+def list_or_not_null(x):
+    if isinstance(x, list):
+        return True
+    if not pd.isnull(x):
+        return True
+    return False
 
 
 def flatten(x):
@@ -576,3 +604,20 @@ def flatten(x):
     for v in x:
         l += flatten(v)
     return l
+
+def dict_replace(d, key, new_values):
+    """Recursively traverse a dict of dicts and replace values for given key.
+
+    Works in place, so make sure to make a copy before passing a dict to this
+    function if you want to leave the original unaltered.
+
+    """
+    for k, v in d.items():
+        if k == key:
+            d[k] = new_values.get(d[k], d[k])
+        elif isinstance(v, dict):
+            dict_replace(v, key=key, new_values=new_values)
+        elif isinstance(v, list):
+            for e in v:
+                if isinstance(e, dict):
+                    dict_replace(e, key=key, new_values=new_values)

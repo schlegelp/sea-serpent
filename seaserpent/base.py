@@ -1,4 +1,5 @@
 import logging
+import copy
 import json
 import jwt
 import numbers
@@ -19,7 +20,7 @@ from .utils import (process_records, make_records,
                     is_iterable, make_iterable, is_hashable,
                     map_columntype, find_base, write_access,
                     validate_dtype, validate_comparison, validate_table,
-                    validate_values, flatten, check_token)
+                    validate_values, flatten, check_token, dict_replace)
 from .patch import SeaTableAPI, Account
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,9 @@ if not logger.handlers:
         '%(levelname)-5s : %(message)s')
     sh.setFormatter(formatter)
     logger.addHandler(sh)
+
+
+NoneType = type(None)
 
 
 class Table:
@@ -182,7 +186,7 @@ class Table:
     @write_access
     @check_token
     def __setitem__(self, key, values):
-        if not is_hashable(key):
+        if not is_hashable(key) or isinstance(key, tuple):
             raise KeyError('Key must be hashable (i.e. a single column). Use '
                            '.loc indexer to set values for a specific slice.')
 
@@ -191,7 +195,7 @@ class Table:
 
         if key not in self.columns:
             raise KeyError('Column must exists, use `add_column()` method to '
-                           f'create {"key"} before setting its values')
+                           f'create "{key}" before setting its values')
 
         if isinstance(values, (pd.Series, Column)):
             values = values.values
@@ -343,7 +347,7 @@ class Table:
         # Validate table
         df = validate_table(df)
 
-        if df[id_col].dtype == object:
+        if df[id_col].dtype in (object, 'string[python]'):
             id_col_dtype = 'text'
         else:
             id_col_dtype = map_columntype(df[id_col].dtype.kind).name.lower()
@@ -362,8 +366,12 @@ class Table:
 
             col = df[c]
 
-            if col.dtype == object:
-                dtype = str
+            if col.dtype in (object, 'string[python]'):
+                # If all non-null values are lists
+                if all([isinstance(v, list) or pd.isnull(v) for v in col.values]):
+                    dtype = 'multiple_select'
+                else:
+                    dtype = str
             elif isinstance(col.dtype, pd.CategoricalDtype):
                 dtype = 'single_select'
             else:
@@ -375,6 +383,16 @@ class Table:
                             'color': '#aaa',
                             'textColor': '#000000'
                             } for o in col.dtype.categories]
+            elif dtype == 'multiple_select':
+                vals = []
+                for v in col.values:
+                    if isinstance(v, list):
+                        vals += v
+                options = [{
+                            'name': str(o),
+                            'color': '#aaa',
+                            'textColor': '#000000'
+                            } for o in list(set(vals))]
             else:
                 options = None
 
@@ -385,6 +403,91 @@ class Table:
         # Add the actual data
         table.append(df)
         logger.info('Data uploaded.')
+
+        return table
+
+    @classmethod
+    def _from_ss_table(cls, df, table_name, base, auth_token=None, server=None):
+        """Create Table from other Table.
+
+        Entry point for this is usually `Table.from_table`.
+
+        """
+        assert isinstance(df, Table)
+
+        if 'link' in df.dtypes.values:
+            logger.warning('Table contains `link` columns which will not be'
+                           'copied.')
+
+        columns = []
+        for c in df.meta['columns']:
+            # Skip link columns
+            if c['type'] == 'link':
+                continue
+
+            columns.append({'column_name': c['name'],
+                            'column_type': c['type']})
+            if 'data' in c:
+                columns[-1]['column_data'] = c['data']
+
+        table = cls.new(table_name=table_name, base=base,
+                        columns=columns,
+                        auth_token=auth_token, server=server)
+        logger.info('New table created.')
+
+        # Resize columns
+        for col in df.meta['columns']:
+            table[col['name']].resize(col['width'])
+
+        # Add the actual data
+        table.append(df.to_frame())
+        logger.info('Data uploaded.')
+
+        # Add views
+        if df.meta.get('views', None):
+            # Map between old and new col keys in the views
+            views = copy.deepcopy(df.meta['views'])
+            old2new = dict(zip([c['key'] for c in df.meta['columns']],
+                               [c['key'] for c in table.meta['columns']]))
+            for view in views:
+                dict_replace(view, 'column_key', old2new)
+                view['hidden_columns'] = [old2new[c] for c in view['hidden_columns']]
+
+            # Now add & modify the views
+            existing_views = [v['name'] for v in table.meta['views']]
+            for view in views:
+                # Generate view if it doesn't exist yet
+                if view['name'] not in existing_views:
+                    url = (f"{table.server}/dtable-server/api/v1/dtables/"
+                           f"{table.base.dtable_uuid}/views/"
+                           f"?table_name={table_name}")
+                    r = requests.post(url,
+                                      headers=table.base.headers,
+                                      json={'name': view['name']})
+                    r.raise_for_status()
+
+                    # Data contains the ID of the view
+                    _ = r.json()
+
+                # Now actually set the view
+                url = (f"{table.server}/dtable-server/api/v1/dtables/"
+                       f"{table.base.dtable_uuid}/views/{view['name']}"
+                       f"?table_name={table_name}")
+
+                # These are the parameters we can send
+                # Note: colorbys don't seem to work (= ignored by API endpoint)
+                params = ('is_locked', 'filters', 'filter_conjunction',
+                          'hidden_columns', 'sorts', 'groupbys', 'colorbys')
+                data = {p: view[p] for p in params if p in view}
+
+                r = requests.put(url,
+                                 headers=table.base.headers,
+                                 json=data)
+                r.raise_for_status()
+
+                data = r.json()
+
+            logger.info('Views added.')
 
         return table
 
@@ -660,7 +763,7 @@ class Table:
                          progress=self.progress)
 
         if 'success' in r:
-            logger.info('Rows successfully deleted!')
+            logger.info(f'Successfully deleted {len(row_ids)} rows!')
 
     @write_access
     @check_token
@@ -1777,7 +1880,7 @@ class LocIndexer:
         where, col = key
 
         if col not in self.table.columns:
-            raise KeyError('Column must exists, use `add_column()` method to '
+            raise KeyError('Column {col} must exists, use `add_column()` method to '
                            f'create "{col}" before setting its values')
 
         if isinstance(where, pd.Series):
