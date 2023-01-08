@@ -265,7 +265,7 @@ class Table:
     @property
     def row_ids(self):
         """Row IDs."""
-        return self['_id'].values
+        return self['_id'].values.astype(str)
 
     @property
     def dtypes(self):
