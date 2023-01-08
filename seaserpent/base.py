@@ -129,6 +129,10 @@ class Table:
         # Maximum number of operations (e.g. edits) per batch
         self.max_operations = max_operations
 
+        # Some parameters for bundling updates
+        self._hold = False
+        self._queue = []
+
     def __array__(self, dtype=None):
          return np.array(self.values, dtype=dtype)
 
@@ -210,12 +214,15 @@ class Table:
         records = [{'row_id': r['_id'],
                     'row': {key: v if not pd.isnull(v) else None}} for r, v in zip(row_ids, values)]
 
-        r = batch_upload(partial(self.base.batch_update_rows, self.name),
-                         records, batch_size=self.max_operations,
-                         progress=self.progress)
+        if not self._hold:
+            r = batch_upload(partial(self.base.batch_update_rows, self.name),
+                             records, batch_size=self.max_operations,
+                             progress=self.progress)
 
-        if 'success' in r:
-            logger.info('Write successful!')
+            if 'success' in r:
+                logger.info('Write successful!')
+        else:
+            self._queue += records
 
     def __repr__(self):
         shape = self.shape
@@ -1361,13 +1368,16 @@ class Column:
         records = [{'row_id': r,
                     'row': {self.name: None}} for r in row_ids]
 
-        r = batch_upload(partial(self.table.base.batch_update_rows, self.table.name),
-                         records, desc='Clearing',
-                         batch_size=self.table.max_operations,
-                         progress=self.table.progress)
+        if not self.table._hold:
+            r = batch_upload(partial(self.table.base.batch_update_rows, self.table.name),
+                             records, desc='Clearing',
+                             batch_size=self.table.max_operations,
+                             progress=self.table.progress)
 
-        if 'success' in r:
-            logger.info('Clear successful!')
+            if 'success' in r:
+                logger.info('Clear successful!')
+        else:
+            self.table._queue += records
 
     @write_access
     @check_token
@@ -1799,14 +1809,17 @@ class LocIndexer:
         records = [{'row_id': r,
                     'row': {col: v if not pd.isnull(v) else None}} for r, v in zip(row_ids, values)]
 
-        r = batch_upload(partial(self.table.base.batch_update_rows,
-                                 self.table.name),
-                         records,
-                         batch_size=self.table.max_operations,
-                         progress=self.table.progress)
+        if not self.table._hold:
+            r = batch_upload(partial(self.table.base.batch_update_rows,
+                                     self.table.name),
+                             records,
+                             batch_size=self.table.max_operations,
+                             progress=self.table.progress)
 
-        if 'success' in r:
-            logger.info(f'Successfully wrote to "{col}"!')
+            if 'success' in r:
+                logger.info(f'Successfully wrote to "{col}"!')
+        else:
+            self.table._queue += records
 
 
 class iLocIndexer:
@@ -1954,3 +1967,50 @@ def batch_upload(func, records, batch_size=1000, desc='Writing',
             pbar.refresh()  # for some reason this is necessary
 
     return {'success'} if no_errors else {'errors'}
+
+
+class BundleEdits:
+    """Context manager delays uploading edits until after exit.
+
+    Can be useful if you are changing many values at a time and want to wait
+    till you are done for pushing the changes to Seatable.
+
+    Currently this only works for updating rows.
+    """
+    def __init__(self, table):
+        if not isinstance(table, Table):
+            raise TypeError(f'Expected `seaserpent.Table`, got {type(table)}')
+        self.table = table
+        self.nested = False
+
+    def __enter__(self):
+        # Deal with cases of nested bundling
+        if self.table._hold:
+            self.nested = True
+        self.table._hold = True
+
+    def __exit__(self, type, value, traceback):
+        if not self.nested:
+            if self.table._queue:
+                # We need to combine records with the same row ID because if a
+                # single batch contains records that point tot he same row it will
+                # apparently only use the last edit
+                rows = {}
+                for r in self.table._queue:
+                    rid = r['row_id']
+                    rows[rid] = rows.get(rid, {'row_id': rid, 'row': {}})
+                    rows[rid]['row'].update(r['row'])
+
+                r = batch_upload(partial(self.table.base.batch_update_rows, self.table.name),
+                                 list(rows.values()),
+                                 batch_size=self.table.max_operations,
+                                 progress=self.table.progress)
+
+                if 'success' in r:
+                    logger.info(f'Successfully wrote queue ({len(rows)} rows) to table!')
+                    self.table._queue = []
+                else:
+                    logger.warning('Something went wrong while writing queue to '
+                                   'table.')
+
+            self.table._hold = False
