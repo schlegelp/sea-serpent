@@ -1946,6 +1946,22 @@ class Column:
         if any(needs_update):
             self.table.loc[needs_update, self.name] = values[needs_update]
 
+    def value_counts(self, **kwargs):
+        """Return a Series contain counts of unique values.
+
+        Parameters
+        ----------
+        **kwargs
+                    Keyword arguments are passed through to
+                    `pandas.Series.value_counts()`.
+
+        Returns
+        -------
+        counts :    pandas.Series
+
+        """
+        return self.to_series().value_counts(**kwargs)
+
     @write_access
     def add_options(self, options):
         """Add options for this column.
