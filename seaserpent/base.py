@@ -1720,12 +1720,15 @@ class Column:
 
     def contains(self, pat):
         """Filter to strings containing given substring."""
-        if self.dtype != 'text':
-            raise ValueError('Can only Filter by substring if Column is of '
-                             f'type "text", not {self.dtype}')
         if not isinstance(pat, str):
             raise TypeError(f'`pat` must be str, not "{type(pat)}"')
-        return Filter(f"{self.name} LIKE '%{pat}%'")
+
+        if self.dtype == 'text':
+            return Filter(f"{self.name} LIKE '%{pat}%'")
+        elif self.dtype in ('single-select', 'multiple-select'):
+            return self.isin([o for o in self.options if pat in o])
+        raise ValueError('Can only Filter by substring if Column is of '
+                         f'type "text" or single-/multiple-select, not {self.dtype}')
 
     def startswith(self, pat):
         """Filter to strings starting with given substring."""
