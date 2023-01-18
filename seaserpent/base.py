@@ -283,6 +283,13 @@ class Table:
         return self.meta['_id']
 
     @property
+    def server_info(self):
+        """Server info."""
+        r = requests.get(f'{self.server}server-info')
+        r.raise_for_status()
+        return r.json()
+
+    @property
     def shape(self):
         """Shape of table."""
         n_rows = self.query('SELECT COUNT(*)',
