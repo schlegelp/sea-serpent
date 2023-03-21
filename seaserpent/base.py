@@ -20,7 +20,8 @@ from .utils import (process_records, make_records,
                     is_iterable, make_iterable, is_hashable,
                     map_columntype, find_base, write_access,
                     validate_dtype, validate_comparison, validate_table,
-                    validate_values, flatten, check_token, dict_replace)
+                    validate_values, flatten, check_token, dict_replace,
+                    is_equal_array)
 from .patch import SeaTableAPI, Account
 
 logger = logging.getLogger(__name__)
@@ -1940,8 +1941,10 @@ class Column:
         # (i.e. no/empty value) but np.nan is != None
         values[pd.isnull(values)] = None
 
-        # Find values that need updating
-        needs_update = self.values != values
+        # Find values that need updating. Note we're using a dedicated function
+        # to avoid issues with pandas StringType (see `is_equal_array` for
+        # further explanation)
+        needs_update = ~is_equal_array(self.values, values)
 
         if any(needs_update):
             self.table.loc[needs_update, self.name] = values[needs_update]

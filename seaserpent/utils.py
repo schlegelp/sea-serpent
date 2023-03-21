@@ -621,3 +621,48 @@ def dict_replace(d, key, new_values):
             for e in v:
                 if isinstance(e, dict):
                     dict_replace(e, key=key, new_values=new_values)
+
+
+def is_equal_array(a, b):
+    """Compare columns/arrays.
+
+    We need this due to pandas' StringType which makes some comparisons
+    really awkward because it propagates missing values:
+
+     >>> [<NA>, 'A'] == ['A', 'A']
+     [<NA>, True]
+
+     >>> [<NA>, 'A'] == [<NA>, 'A']
+     [<NA>, True]
+
+     This function will treat <NA> as an actual value:
+
+     >>> is_equal_array([<NA>, 'A'], ['A', 'A'])
+     [False, True]
+
+     >>> is_equal_array([<NA>, 'A'], [<NA>, 'A'])
+     [True, True]
+
+     Other non-string comparisons will works as intended.
+
+    """
+    if isinstance(a, list):
+        a = np.asarray(a)
+    if isinstance(b, list):
+        b = np.asarray(b)
+
+    if not isinstance(a, (np.ndarray, pd.Series, pd.core.arrays.StringArray)):
+        raise TypeError(f'Expected array or Series, got "{type(a)}"')
+    if not isinstance(b, (np.ndarray, pd.Series, pd.core.arrays.StringArray)):
+        raise TypeError(f'Expected array or Series, got "{type(b)}"')
+
+    comp = a == b
+    if isinstance(comp, pd.Series):
+        comp = comp.values
+
+    # Set cases where `a` and `b` are NA to True
+    comp[pd.isnull(comp) & pd.isnull(a) & pd.isnull(b)] = True
+    # Set the rest to null
+    comp[pd.isnull(comp)] = False
+
+    return comp.astype(bool)
