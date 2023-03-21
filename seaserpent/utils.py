@@ -623,6 +623,13 @@ def dict_replace(d, key, new_values):
                     dict_replace(e, key=key, new_values=new_values)
 
 
+def is_array_like(x):
+    """Check if `x` is array like."""
+    if isinstance(x, (np.ndarray, pd.core.arrays.ExtensionArray)):
+        return True
+    return False
+    
+
 def is_equal_array(a, b):
     """Compare columns/arrays.
 

@@ -21,7 +21,7 @@ from .utils import (process_records, make_records,
                     map_columntype, find_base, write_access,
                     validate_dtype, validate_comparison, validate_table,
                     validate_values, flatten, check_token, dict_replace,
-                    is_equal_array)
+                    is_equal_array, is_array_like)
 from .patch import SeaTableAPI, Account
 
 logger = logging.getLogger(__name__)
@@ -2086,7 +2086,7 @@ class LocIndexer:
             where = where.values
 
         # If where is boolean mask fetch the entire frame
-        if isinstance(where, np.ndarray) and where.dtype == bool:
+        if is_array_like(where) and (where.dtype in (bool, pd.BooleanDtype())):
             query = create_query(self.table, columns=cols, where=None, limit=limit)
         else:
             query = create_query(self.table, columns=cols, where=where, limit=limit)
@@ -2104,7 +2104,7 @@ class LocIndexer:
             data = data.reindex(self.table.columns, axis=1)
 
         # If index was boolean mask subset to requested rows
-        if isinstance(where, np.ndarray) and where.dtype == bool:
+        if is_array_like(where) and (where.dtype in (bool, pd.BooleanDtype())):
             data = data.loc[where].copy()
 
         # If a single row was requested
