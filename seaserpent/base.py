@@ -2262,7 +2262,7 @@ def create_query(table, columns=None, where=None, limit=None):
             if not where.dtype == 'checkbox':
                 raise TypeError('Can only query by columns with dtype '
                                 f'"checkbox", got "{where.dtype}"')
-            q += f' WHERE {where.name}'
+            q += f' WHERE {where.name} = True'
         elif isinstance(where, slice):
             if slice.start == slice.stop:
                 raise KeyError('Slice start and stop must not be the same')
