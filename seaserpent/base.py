@@ -1908,6 +1908,38 @@ class Column:
 
         logger.debug(f'Column {self.name} resized.')
 
+    @write_access
+    @check_token
+    def freeze(self):
+        """Freeze column.
+
+        Use unfreeze() method to unfreeze column.
+
+        """
+        resp = self.table.base.freeze_column(self.table.name,
+                                             self.key,
+                                             frozen=True)
+        if 'name' not in resp:
+            raise ValueError(f'Error writing to table: {resp}')
+
+        logger.debug(f'Column {self.name} frozen.')
+
+    @write_access
+    @check_token
+    def unfreeze(self):
+        """Unfreeze column.
+
+        Use freeze() method to freeze column.
+
+        """
+        resp = self.table.base.freeze_column(self.table.name,
+                                             self.key,
+                                             frozen=False)
+        if 'name' not in resp:
+            raise ValueError(f'Error writing to table: {resp}')
+
+        logger.debug(f'Column {self.name} unfrozen.')
+
     def unique(self):
         """Return unique values in this column."""
         rows = self.table.query(f'SELECT DISTINCT {self.name}', no_limit=True)
