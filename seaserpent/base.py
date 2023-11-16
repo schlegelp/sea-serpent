@@ -1093,7 +1093,7 @@ class Table:
             ids = ids.index.values
 
         logs = []
-        for i in tqdm(ids, leave=False, disable=not_progress, desc='Rows'):
+        for i in tqdm(ids, leave=False, disable=not progress, desc='Rows'):
             with tqdm(desc='Fetching logs',
                       total=total,
                       leave=False,
@@ -1186,7 +1186,6 @@ class Table:
                 app = row.app
                 op_time = row.op_time
                 op_id = row.op_id
-                op_type = row.op_type
                 details = row.details
 
                 # If single row turn it into a fake multi row edit
