@@ -444,7 +444,7 @@ def validate_dtype(table, column, values):
                 ok = False
 
         if not ok:
-            raise TypeError(f'Trying to write {type(v)} to "{dtype}" column.')
+            raise TypeError(f'Trying to write {type(v)} to "{column}" column ({dtype}).')
 
 
 def validate_table(table):
