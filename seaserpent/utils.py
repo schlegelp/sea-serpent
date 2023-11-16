@@ -628,10 +628,10 @@ def is_array_like(x):
     if isinstance(x, (np.ndarray, pd.core.arrays.ExtensionArray)):
         return True
     return False
-    
+
 
 def is_equal_array(a, b):
-    """Compare columns/arrays.
+    """Compare columns/arrays elementwise.
 
     We need this due to pandas' StringType which makes some comparisons
     really awkward because it propagates missing values:
@@ -658,14 +658,28 @@ def is_equal_array(a, b):
     if isinstance(b, list):
         b = np.asarray(b)
 
+    # Turn categoricals into string arrays because otherwise elementwise
+    # comparison will fail
+    if isinstance(a, pd.core.arrays.categorical.Categorical):
+        a = a.astype('string')
+
     if not isinstance(a, (np.ndarray, pd.Series, pd.core.arrays.StringArray)):
         raise TypeError(f'Expected array or Series, got "{type(a)}"')
     if not isinstance(b, (np.ndarray, pd.Series, pd.core.arrays.StringArray)):
         raise TypeError(f'Expected array or Series, got "{type(b)}"')
 
+    if isinstance(a, np.ndarray) and (a.dtype.kind == 'U'):
+            a = pd.array(a)
+
+    if isinstance(b, np.ndarray) and (b.dtype.kind == 'U'):
+            b = pd.array(b)
+
     comp = a == b
     if isinstance(comp, pd.Series):
         comp = comp.values
+    elif isinstance(comp, bool):
+        raise ValueError(f'Elementwise comparison failed for {a.dtype} and '
+                         f'{b.dtype}')
 
     # Set cases where `a` and `b` are NA to True
     comp[pd.isnull(comp) & pd.isnull(a) & pd.isnull(b)] = True
