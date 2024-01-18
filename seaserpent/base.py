@@ -1536,7 +1536,7 @@ class Column:
         raise TypeError(f"'>' not supported between column and {type(other)}")
 
     def __le__(self, other):
-        return Filter((self > other).query.replace('<', '<='))
+        return Filter((self < other).query.replace('<', '<='))
 
     def __lt__(self, other):
         _ = validate_comparison(self, other)
