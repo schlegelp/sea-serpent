@@ -553,7 +553,7 @@ class Table:
         if not is_iterable(columns):
             columns = [columns]
         columns = np.asarray(columns)
-        miss = columns[~np.isin(columns, self.columns) & (columns != 'id')]
+        miss = columns[~np.isin(columns, self.columns) & (columns != '_id')]
         if any(miss):
             raise KeyError(f'"{miss}" not among columns')
 
