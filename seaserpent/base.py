@@ -950,6 +950,11 @@ class Table:
 
                 # Drop irrelevant entries
                 table = logs[-1].operation.map(lambda x: x.get('table_id', None))
+
+                # Get the last timestamp before we drop rows 
+                last_op = logs[-1].op_time.values[-1]
+
+                # Drop rows for other tables
                 logs[-1] = logs[-1][table == self.id]
 
                 entries += logs[-1].shape[0]
@@ -961,17 +966,17 @@ class Table:
 
                 if max_time:
                     # Get the days we went back
-                    days = (now - logs[-1].op_time.values[-1]) / 1e3 / 86_400
+                    days = (now - last_op) / 1e3 / 86_400
                     diff = int(days - pbar.n)
                     if diff:
                         pbar.update(diff)
-                    if logs[-1].op_time.values[-1] <= max_time:
+                    if last_op <= max_time:
                         break
 
                 page += 1
 
         # Combine
-        logs = pd.concat(logs, axis=0)
+        logs = pd.concat([ta for ta in logs if not ta.empty], axis=0)
 
         if max_time:
             logs = logs[logs.op_time >= max_time]
