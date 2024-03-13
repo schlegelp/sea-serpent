@@ -1,13 +1,8 @@
 # sea-serpent
 A dataframe-like wrapper around the [SeaTable](https://seatable.io/en/) API.
 
-This library tries to make interacting with SeaTables as if you were working
-with a local pandas DataFrame.
-
-Some notes:
-- This library is at an early stage and the interface might still change somewhat.
-- For convenience and ease of access we're using names to identify tables,
-  columns and bases. Hence you should avoid duplicate names if at all possible.
+This library tries to make interacting with SeaTables as easy as if you were
+working with a local pandas DataFrame.
 
 ## Install
 
@@ -183,16 +178,18 @@ Create column that pulls data from linked table:
 ...                         formula='lookup')           # how to aggregate data (lookup, mean, max, etc)
 ```
 
-## Known limitations & oddities
+## Random notes, limitations & oddities
 
-1. 64 bit integers/floats are truncated when writing to a table. I suspect this
+1. For convenience and ease of access we're using names to identify tables,
+   columns and bases. Hence you should avoid duplicate names if at all possible.
+2. 64 bit integers/floats are truncated when writing to a table. I suspect this
    happens on the server side when decoding the JSON payload because manually
    entering large numbers through the web interface works perfectly well
    (copy-pasting still fails though). Hence, `seaserpent` quietly downcasts 64
    bit to 32 bit if possible and failing that converts to strings before uploading.
-2. The web interface appears to only show floats up to the 8th decimal. In the
+3. The web interface appears to only show floats up to the 8th decimal. In the
    database the precision must be higher though because I have successfully
    written 1e-128 floats.
-3. Infinite values (i.e. `np.inf`) raise an error when trying to write.
-4. Cells manually cleared through the UI return empty strings (``''``). By
+4. Infinite values (i.e. `np.inf`) raise an error when trying to write.
+5. Cells manually cleared through the UI return empty strings (``''``). By
    default, ``sea-serpent`` will convert these to ``None`` where possible.
