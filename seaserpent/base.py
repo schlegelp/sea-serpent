@@ -2398,26 +2398,53 @@ class BundleEdits:
 
     def __exit__(self, type, value, traceback):
         if not self.nested:
-            if self.table._queue:
-                # We need to combine records with the same row ID because if a
-                # single batch contains records that point tot he same row it will
-                # apparently only use the last edit
-                rows = {}
-                for r in self.table._queue:
-                    rid = r['row_id']
-                    rows[rid] = rows.get(rid, {'row_id': rid, 'row': {}})
-                    rows[rid]['row'].update(r['row'])
+            try:
+                if self.table._queue:
+                    # We need to combine records with the same row ID because if a
+                    # single batch contains records that point tot he same row it will
+                    # apparently only use the last edit
 
-                r = batch_upload(partial(self.table.base.batch_update_rows, self.table.name),
-                                 list(rows.values()),
-                                 batch_size=self.table.max_operations,
-                                 progress=self.table.progress)
+                    rows = {}
+                    for r in self.table._queue:
+                        rid = r["row_id"]
+                        rows[rid] = rows.get(rid, {"row_id": rid, "row": {}})
+                        rows[rid]["row"].update(r["row"])
 
-                if 'success' in r:
-                    logger.info(f'Successfully wrote queue ({len(rows)} rows) to table!')
-                    self.table._queue = []
-                else:
-                    logger.warning('Something went wrong while writing queue to '
-                                   'table.')
+                    r = batch_upload(
+                        partial(self.table.base.batch_update_rows, self.table.name),
+                        list(rows.values()),
+                        batch_size=self.table.max_operations,
+                        progress=self.table.progress,
+                    )
 
-            self.table._hold = False
+                    if "success" in r:
+                        logger.info(
+                            f"Successfully wrote queue ({len(rows)} rows) to table!"
+                        )
+                    else:
+                        self.table._queue_error = r
+                        self.table._queue_failed = self.table._queue
+                        logger.warning(
+                            "Something went wrong on the server side while writing queue to table. "
+                            "You can find the error message as `table._queue_error` and the failed queue as "
+                            "`table._queue_failed`."
+                        )
+
+            except BaseException as e:
+                self.table._queue_failed = self.table._queue
+                msg = (
+                    "Error while writing queue to table. Attaching failed queue as `table._queue_failed` "
+                    "and clearing the actual queue."
+                )
+                raise WriteTableError(msg) from e
+            finally:
+                self.table._queue = []
+                self.table._hold = False
+
+
+class WriteTableError(Exception):
+    """Exception raised when writing to a table fails.
+
+    This is a generic error that can be used to catch all errors that occur
+    when writing to a table.
+    """
