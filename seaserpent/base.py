@@ -12,27 +12,40 @@ import numpy as np
 import pandas as pd
 
 from functools import partial
-#from seatable_api.main import SeaTableAPI
+
+# from seatable_api.main import SeaTableAPI
 from seatable_api.constants import ColumnTypes
 from tqdm.auto import trange, tqdm
 
-from .utils import (process_records, make_records,
-                    is_iterable, make_iterable, is_hashable,
-                    map_columntype, find_base, write_access,
-                    validate_dtype, validate_comparison, validate_table,
-                    validate_values, flatten, check_token, dict_replace,
-                    is_equal_array, is_array_like)
+from .utils import (
+    process_records,
+    make_records,
+    is_iterable,
+    make_iterable,
+    is_hashable,
+    map_columntype,
+    find_base,
+    write_access,
+    validate_dtype,
+    validate_comparison,
+    validate_table,
+    validate_values,
+    flatten,
+    check_token,
+    dict_replace,
+    is_equal_array,
+    is_array_like,
+)
 from .patch import SeaTableAPI, Account
 
 logger = logging.getLogger(__name__)
-logger.setLevel('INFO')
+logger.setLevel("INFO")
 
 if not logger.handlers:
     sh = logging.StreamHandler()
     sh.setLevel(logging.DEBUG)
     # Create formatter and add it to the handlers
-    formatter = logging.Formatter(
-        '%(levelname)-5s : %(message)s')
+    formatter = logging.Formatter("%(levelname)-5s : %(message)s")
     sh.setFormatter(formatter)
     logger.addHandler(sh)
 
@@ -76,24 +89,34 @@ class Table:
 
     """
 
-    def __init__(self, table, base=None, auth_token=None, server=None,
-                 read_only=True, max_operations=1000, sanitize=True,
-                 progress=True):
+    def __init__(
+        self,
+        table,
+        base=None,
+        auth_token=None,
+        server=None,
+        read_only=True,
+        max_operations=1000,
+        sanitize=True,
+        progress=True,
+    ):
         # If the table is given as index (i.e. first table in base X), `base`
         # must not be `None`
         if isinstance(table, int) and isinstance(base, type(None)):
-            raise ValueError('Must provide a `base` when giving `table` index '
-                             'instead of name.')
+            raise ValueError(
+                "Must provide a `base` when giving `table` index instead of name."
+            )
 
         # Find base and table
         if not isinstance(base, SeaTableAPI):
-            (self.workspace_id,
-             self.base_name,
-             self.auth_token,
-             self.server) = find_base(base=base,
-                                      server=server,
-                                      auth_token=auth_token,
-                                      required_table=table if not isinstance(table, int) else None)
+            (self.workspace_id, self.base_name, self.auth_token, self.server) = (
+                find_base(
+                    base=base,
+                    server=server,
+                    auth_token=auth_token,
+                    required_table=table if not isinstance(table, int) else None,
+                )
+            )
             # This sets/refreshes self.base
             self.auth()
         else:
@@ -104,10 +127,10 @@ class Table:
             self.auth_token = None
 
         if isinstance(table, int):
-            tables = self.base.get_metadata().get('tables', [])
+            tables = self.base.get_metadata().get("tables", [])
             if not len(tables):
-                raise ValueError('Base does not contain any tables.')
-            table = tables[0]['name']
+                raise ValueError("Base does not contain any tables.")
+            table = tables[0]["name"]
 
         # Pull meta data for base and table
         self._stale = True
@@ -116,11 +139,11 @@ class Table:
         self.fetch_meta()
 
         if self.name == self.id:
-            self.name = self.meta['name']
+            self.name = self.meta["name"]
 
         self.loc = LocIndexer(self)
         # Haven't decided if the below would actually be useful
-        #self.iloc = iLocIndexer(self)
+        # self.iloc = iLocIndexer(self)
 
         # Whether to show progress bars
         self.progress = progress
@@ -139,7 +162,7 @@ class Table:
         self._queue = []
 
     def __array__(self, dtype=None):
-         return np.array(self.values, dtype=dtype)
+        return np.array(self.values, dtype=dtype)
 
     def __dir__(self):
         """Custom __dir__ to make columns searchable."""
@@ -150,7 +173,7 @@ class Table:
         return self.shape[0]
 
     def __getattr__(self, name):
-        if name not in self.columns and name != '_id':
+        if name not in self.columns and name != "_id":
             # Update meta data
             _ = self.fetch_meta()
 
@@ -165,7 +188,7 @@ class Table:
 
         # If single string assume this is a column and return the promise
         if is_hashable(key):
-            if key not in self.columns and key not in ('_id', ):
+            if key not in self.columns and key not in ("_id",):
                 self.fetch_meta()
                 if key not in self.columns:
                     raise AttributeError(f'Table has no "{key}" column')
@@ -181,22 +204,29 @@ class Table:
 
         query = create_query(self, columns=columns, where=None, limit=None)
         records = self.query(query, no_limit=True)
-        return process_records(records, columns=columns,
-                               dtypes=self.dtypes.to_dict() if self.sanitize else None)
+        return process_records(
+            records,
+            columns=columns,
+            dtypes=self.dtypes.to_dict() if self.sanitize else None,
+        )
 
     @write_access
     @check_token
     def __setitem__(self, key, values):
         if not is_hashable(key) or isinstance(key, tuple):
-            raise KeyError('Key must be hashable (i.e. a single column). Use '
-                           '.loc indexer to set values for a specific slice.')
+            raise KeyError(
+                "Key must be hashable (i.e. a single column). Use "
+                ".loc indexer to set values for a specific slice."
+            )
 
         # Update meta data for self
         _ = self.fetch_meta()
 
         if key not in self.columns:
-            raise KeyError('Column must exists, use `add_column()` method to '
-                           f'create "{key}" before setting its values')
+            raise KeyError(
+                "Column must exists, use `add_column()` method to "
+                f'create "{key}" before setting its values'
+            )
 
         if isinstance(values, (pd.Series, Column)):
             values = values.values
@@ -204,8 +234,10 @@ class Table:
         if not is_iterable(values):
             values = [values] * len(self)
         elif len(values) != len(self):
-            raise ValueError(f'Length of values ({len(values)}) does not '
-                             f'match length of keys ({len(self)})')
+            raise ValueError(
+                f"Length of values ({len(values)}) does not "
+                f"match length of keys ({len(self)})"
+            )
 
         # Validate datatype
         validate_dtype(self, key, values)
@@ -214,18 +246,23 @@ class Table:
         values = validate_values(values, col=self[key])
 
         # Fetch the IDs
-        row_ids = self.query('SELECT _id', no_limit=True)
+        row_ids = self.query("SELECT _id", no_limit=True)
 
-        records = [{'row_id': r['_id'],
-                    'row': {key: v if not pd.isnull(v) else None}} for r, v in zip(row_ids, values)]
+        records = [
+            {"row_id": r["_id"], "row": {key: v if not pd.isnull(v) else None}}
+            for r, v in zip(row_ids, values)
+        ]
 
         if not self._hold:
-            r = batch_upload(partial(self.base.batch_update_rows, self.name),
-                             records, batch_size=self.max_operations,
-                             progress=self.progress)
+            r = batch_upload(
+                partial(self.base.batch_update_rows, self.name),
+                records,
+                batch_size=self.max_operations,
+                progress=self.progress,
+            )
 
-            if 'success' in r:
-                logger.info('Write successful!')
+            if "success" in r:
+                logger.info("Write successful!")
         else:
             self._queue += records
 
@@ -236,13 +273,15 @@ class Table:
     @property
     def collaborators(self):
         """List of all user with access to this table (cached)."""
-        if isinstance(getattr(self, '_collaborators', None), type(None)):
-            url = (f"{self.server}/dtable-server/api/v1/dtables/"
-                   f"{self.base.dtable_uuid}/related-users/")
+        if isinstance(getattr(self, "_collaborators", None), type(None)):
+            url = (
+                f"{self.server}/dtable-server/api/v1/dtables/"
+                f"{self.base.dtable_uuid}/related-users/"
+            )
             r = requests.get(url, headers=self.base.headers)
             r.raise_for_status()
 
-            self._collaborators = pd.DataFrame(r.json()['user_list'])
+            self._collaborators = pd.DataFrame(r.json()["user_list"])
             col = self._collaborators.pop("name")  # bring name column to front
             self._collaborators.insert(0, col.name, col)
 
@@ -251,7 +290,7 @@ class Table:
     @property
     def meta(self):
         """Meta data for this table."""
-        if not getattr(self, '_meta', None) or getattr(self, '_stale', True):
+        if not getattr(self, "_meta", None) or getattr(self, "_stale", True):
             self.fetch_meta()
             self._stale = False
         return self._meta
@@ -259,42 +298,40 @@ class Table:
     @meta.setter
     def meta(self, value):
         if not isinstance(value, dict):
-            raise TypeError(f'`meta` must be dict, got {type(value)}')
+            raise TypeError(f"`meta` must be dict, got {type(value)}")
         self._meta = value
 
     @property
     def columns(self):
         """Table columns."""
-        return np.array([c['name'] for c in self.meta['columns']])
+        return np.array([c["name"] for c in self.meta["columns"]])
 
     @property
     def row_ids(self):
         """Row IDs."""
-        return self['_id'].values.astype(str)
+        return self["_id"].values.astype(str)
 
     @property
     def dtypes(self):
         """Column data types."""
-        return pd.Series([c['type'] for c in self.meta['columns']],
-                         index=self.columns)
+        return pd.Series([c["type"] for c in self.meta["columns"]], index=self.columns)
 
     @property
     def id(self):
         """ID of the table."""
-        return self.meta['_id']
+        return self.meta["_id"]
 
     @property
     def server_info(self):
         """Server info."""
-        r = requests.get(f'{self.server}server-info')
+        r = requests.get(f"{self.server}server-info")
         r.raise_for_status()
         return r.json()
 
     @property
     def shape(self):
         """Shape of table."""
-        n_rows = self.query('SELECT COUNT(*)',
-                            no_limit=False)[0].get('COUNT(*)', 'NA')
+        n_rows = self.query("SELECT COUNT(*)", no_limit=False)[0].get("COUNT(*)", "NA")
         return (n_rows, len(self.columns))
 
     @property
@@ -305,7 +342,7 @@ class Table:
     @property
     def views(self):
         """Available views for this table."""
-        return [v['name'] for v in self.meta['views']]
+        return [v["name"] for v in self.meta["views"]]
 
     @classmethod
     def from_frame(cls, df, table_name, base, id_col=0, auth_token=None, server=None):
@@ -336,15 +373,17 @@ class Table:
 
         """
         if isinstance(df, Table):
-            return cls._from_ss_table(df,
-                                      table_name=table_name,
-                                      base=base,
-                                      auth_token=auth_token,
-                                      server=server)
+            return cls._from_ss_table(
+                df,
+                table_name=table_name,
+                base=base,
+                auth_token=auth_token,
+                server=server,
+            )
 
         # Some sanity checks
         if len(df.columns) < len(np.unique(df.columns)):
-            raise ValueError('Table must not contain duplicate column names')
+            raise ValueError("Table must not contain duplicate column names")
 
         if isinstance(id_col, int):
             id_col = df.columns[id_col]
@@ -355,16 +394,20 @@ class Table:
         # Validate table
         df = validate_table(df)
 
-        if df[id_col].dtype in (object, 'string[python]'):
-            id_col_dtype = 'text'
+        if df[id_col].dtype in (object, "string[python]"):
+            id_col_dtype = "text"
         else:
             id_col_dtype = map_columntype(df[id_col].dtype.kind).name.lower()
-        columns = [{'column_name': id_col,
-                    'column_type': id_col_dtype}]
+        columns = [{"column_name": id_col, "column_type": id_col_dtype}]
 
-        table = cls.new(table_name=table_name, base=base, columns=columns,
-                        auth_token=auth_token, server=server)
-        logger.info('New table created.')
+        table = cls.new(
+            table_name=table_name,
+            base=base,
+            columns=columns,
+            auth_token=auth_token,
+            server=server,
+        )
+        logger.info("New table created.")
 
         # Create the columns (infer data types)
         for c in df.columns:
@@ -374,43 +417,41 @@ class Table:
 
             col = df[c]
 
-            if col.dtype in (object, 'string[python]'):
+            if col.dtype in (object, "string[python]"):
                 # If all non-null values are lists
                 if all([isinstance(v, list) or pd.isnull(v) for v in col.values]):
-                    dtype = 'multiple_select'
+                    dtype = "multiple_select"
                 else:
                     dtype = str
             elif isinstance(col.dtype, pd.CategoricalDtype):
-                dtype = 'single_select'
+                dtype = "single_select"
             else:
                 dtype = col.dtype.kind
 
-            if dtype == 'single_select':
-                options = [{
-                            'name': str(o),
-                            'color': '#aaa',
-                            'textColor': '#000000'
-                            } for o in col.dtype.categories]
-            elif dtype == 'multiple_select':
+            if dtype == "single_select":
+                options = [
+                    {"name": str(o), "color": "#aaa", "textColor": "#000000"}
+                    for o in col.dtype.categories
+                ]
+            elif dtype == "multiple_select":
                 vals = []
                 for v in col.values:
                     if isinstance(v, list):
                         vals += v
-                options = [{
-                            'name': str(o),
-                            'color': '#aaa',
-                            'textColor': '#000000'
-                            } for o in list(set(vals))]
+                options = [
+                    {"name": str(o), "color": "#aaa", "textColor": "#000000"}
+                    for o in list(set(vals))
+                ]
             else:
                 options = None
 
             table.add_column(col_name=c, col_type=dtype, col_options=options)
 
-        logger.info('New columns added.')
+        logger.info("New columns added.")
 
         # Add the actual data
         table.append(df)
-        logger.info('Data uploaded.')
+        logger.info("Data uploaded.")
 
         return table
 
@@ -423,79 +464,94 @@ class Table:
         """
         assert isinstance(df, Table)
 
-        if 'link' in df.dtypes.values:
-            logger.warning('Table contains `link` columns which will not be'
-                           'copied.')
+        if "link" in df.dtypes.values:
+            logger.warning("Table contains `link` columns which will not becopied.")
 
         columns = []
-        for c in df.meta['columns']:
+        for c in df.meta["columns"]:
             # Skip link columns
-            if c['type'] == 'link':
+            if c["type"] == "link":
                 continue
 
-            columns.append({'column_name': c['name'],
-                            'column_type': c['type']})
-            if 'data' in c:
-                columns[-1]['column_data'] = c['data']
+            columns.append({"column_name": c["name"], "column_type": c["type"]})
+            if "data" in c:
+                columns[-1]["column_data"] = c["data"]
 
-        table = cls.new(table_name=table_name, base=base,
-                        columns=columns,
-                        auth_token=auth_token, server=server)
-        logger.info('New table created.')
+        table = cls.new(
+            table_name=table_name,
+            base=base,
+            columns=columns,
+            auth_token=auth_token,
+            server=server,
+        )
+        logger.info("New table created.")
 
         # Resize columns
-        for col in df.meta['columns']:
-            table[col['name']].resize(col['width'])
+        for col in df.meta["columns"]:
+            table[col["name"]].resize(col["width"])
 
         # Add the actual data
         table.append(df.to_frame())
-        logger.info('Data uploaded.')
+        logger.info("Data uploaded.")
 
         # Add views
-        if df.meta.get('views', None):
+        if df.meta.get("views", None):
             # Map between old and new col keys in the views
-            views = copy.deepcopy(df.meta['views'])
-            old2new = dict(zip([c['key'] for c in df.meta['columns']],
-                               [c['key'] for c in table.meta['columns']]))
+            views = copy.deepcopy(df.meta["views"])
+            old2new = dict(
+                zip(
+                    [c["key"] for c in df.meta["columns"]],
+                    [c["key"] for c in table.meta["columns"]],
+                )
+            )
             for view in views:
-                dict_replace(view, 'column_key', old2new)
-                view['hidden_columns'] = [old2new[c] for c in view['hidden_columns']]
+                dict_replace(view, "column_key", old2new)
+                view["hidden_columns"] = [old2new[c] for c in view["hidden_columns"]]
 
             # Now add & modify the views
-            existing_views = [v['name'] for v in table.meta['views']]
+            existing_views = [v["name"] for v in table.meta["views"]]
             for view in views:
                 # Generate view if it doesn't exist yet
-                if view['name'] not in existing_views:
-                    url = (f"{table.server}/dtable-server/api/v1/dtables/"
-                           f"{table.base.dtable_uuid}/views/"
-                           f"?table_name={table_name}")
-                    r = requests.post(url,
-                                      headers=table.base.headers,
-                                      json={'name': view['name']})
+                if view["name"] not in existing_views:
+                    url = (
+                        f"{table.server}/dtable-server/api/v1/dtables/"
+                        f"{table.base.dtable_uuid}/views/"
+                        f"?table_name={table_name}"
+                    )
+                    r = requests.post(
+                        url, headers=table.base.headers, json={"name": view["name"]}
+                    )
                     r.raise_for_status()
 
                     # Data contains the ID of the view
                     _ = r.json()
 
                 # Now actually set the view
-                url = (f"{table.server}/dtable-server/api/v1/dtables/"
-                       f"{table.base.dtable_uuid}/views/{view['name']}"
-                       f"?table_name={table_name}")
+                url = (
+                    f"{table.server}/dtable-server/api/v1/dtables/"
+                    f"{table.base.dtable_uuid}/views/{view['name']}"
+                    f"?table_name={table_name}"
+                )
 
                 # These are the parameters we can send
                 # Note: colorbys don't seem to work (= ignored by API endpoint)
-                params = ('is_locked', 'filters', 'filter_conjunction',
-                          'hidden_columns', 'sorts', 'groupbys', 'colorbys')
+                params = (
+                    "is_locked",
+                    "filters",
+                    "filter_conjunction",
+                    "hidden_columns",
+                    "sorts",
+                    "groupbys",
+                    "colorbys",
+                )
                 data = {p: view[p] for p in params if p in view}
 
-                r = requests.put(url,
-                                 headers=table.base.headers,
-                                 json=data)
+                r = requests.put(url, headers=table.base.headers, json=data)
                 r.raise_for_status()
 
                 data = r.json()
 
-            logger.info('Views added.')
+            logger.info("Views added.")
 
         return table
 
@@ -526,40 +582,42 @@ class Table:
 
         """
         # Find the base
-        (workspace_id,
-         base_name,
-         auth_token,
-         server) = find_base(base=base,
-                             server=server,
-                             auth_token=auth_token)
+        (workspace_id, base_name, auth_token, server) = find_base(
+            base=base, server=server, auth_token=auth_token
+        )
         account = Account(None, None, server)
         account.token = auth_token
         # Initialize the base
         base = account.get_base(workspace_id, base_name)
 
-        existing_tables = base.get_metadata()['tables']
-        existing_names = [t['name'] for t in existing_tables]
+        existing_tables = base.get_metadata()["tables"]
+        existing_names = [t["name"] for t in existing_tables]
 
         if table_name in existing_names:
             raise ValueError(f'Base already contains a table named "{table_name}"')
 
-        base.add_table(table_name, lang='en', columns=columns)
+        base.add_table(table_name, lang="en", columns=columns)
 
-        return cls(table=table_name, base=base, read_only=False,
-                   auth_token=auth_token, server=server)
+        return cls(
+            table=table_name,
+            base=base,
+            read_only=False,
+            auth_token=auth_token,
+            server=server,
+        )
 
     def _check_columns(self, columns):
         """Check if `columns` exist."""
         if not is_iterable(columns):
             columns = [columns]
         columns = np.asarray(columns)
-        miss = columns[~np.isin(columns, self.columns) & (columns != '_id')]
+        miss = columns[~np.isin(columns, self.columns) & (columns != "_id")]
         if any(miss):
             raise KeyError(f'"{miss}" not among columns')
 
     def _col_ids_to_names(self, ids):
         """Map column IDs to names. Returns `None` if id not found."""
-        id_map = {c['key']: c['name'] for c in self.meta['columns']}
+        id_map = {c["key"]: c["name"] for c in self.meta["columns"]}
 
         if not is_iterable(ids):
             return id_map.get(ids)
@@ -568,10 +626,13 @@ class Table:
 
     def _token_time_left(self):
         """Time left before token expires [s]."""
-        decoded = jwt.decode(self.base.jwt_token, algorithms=['HS256'],
-                             options={"verify_signature": False})
+        decoded = jwt.decode(
+            self.base.jwt_token,
+            algorithms=["HS256"],
+            options={"verify_signature": False},
+        )
 
-        return int(decoded['exp']) - int(time.time())
+        return int(decoded["exp"]) - int(time.time())
 
     def auth(self):
         """Authenticate."""
@@ -616,25 +677,29 @@ class Table:
 
         col_type = map_columntype(col_type)
 
-        resp = self.base.insert_column(table_name=self.name,
-                                       column_name=col_name,
-                                       column_type=col_type,
-                                       column_data=col_data)
+        resp = self.base.insert_column(
+            table_name=self.name,
+            column_name=col_name,
+            column_type=col_type,
+            column_data=col_data,
+        )
 
-        if col_options and col_type in (ColumnTypes.SINGLE_SELECT,
-                                        ColumnTypes.MULTIPLE_SELECT):
+        if col_options and col_type in (
+            ColumnTypes.SINGLE_SELECT,
+            ColumnTypes.MULTIPLE_SELECT,
+        ):
             self.base.add_column_options(self.name, col_name, col_options)
 
         # Make sure meta is updated before next use
         self._stale = True
 
-        if not resp.get('name'):
-            raise ValueError(f'Error writing to table: {resp}')
+        if not resp.get("name"):
+            raise ValueError(f"Error writing to table: {resp}")
         logger.info(f'Column "{col_name}" ({col_type}) added.')
 
     @write_access
     @check_token
-    def add_linked_column(self, col_name, link_col, link_on, formula='lookup'):
+    def add_linked_column(self, col_name, link_col, link_on, formula="lookup"):
         """Add linked column to table.
 
         Parameters
@@ -661,8 +726,15 @@ class Table:
                     For creating links between two tables.
 
         """
-        ALLOWED_FORMULAS = ('lookup', 'count_links', 'rollup-avg', 'findmax',
-                            'findmin', 'rollup-sum', 'rollup-conc')
+        ALLOWED_FORMULAS = (
+            "lookup",
+            "count_links",
+            "rollup-avg",
+            "findmax",
+            "findmin",
+            "rollup-sum",
+            "rollup-conc",
+        )
         if formula not in ALLOWED_FORMULAS:
             raise ValueError(f'Unrecognized formula "{formula}"')
 
@@ -674,21 +746,25 @@ class Table:
 
         if link_col not in self.columns:
             raise ValueError(f'Link column "{link_col}" does not exist.')
-        elif self[link_col].dtype != 'link':
-            raise TypeError(f'Link column must be type "link", not "{self[link_col].dtype}"')
+        elif self[link_col].dtype != "link":
+            raise TypeError(
+                f'Link column must be type "link", not "{self[link_col].dtype}"'
+            )
 
         # Prepare column data
         col_data = {}
-        col_data['formula'] = formula.split('-')[0]
-        col_data['link_column'] = link_col
-        col_data['level1_linked_column'] = link_on
-        if formula.startswith('rollup'):
-            col_data['summary_method'] = formula.split('-')[1]
+        col_data["formula"] = formula.split("-")[0]
+        col_data["link_column"] = link_col
+        col_data["level1_linked_column"] = link_on
+        if formula.startswith("rollup"):
+            col_data["summary_method"] = formula.split("-")[1]
 
-        _ = self.base.insert_column(table_name=self.name,
-                                    column_name=col_name,
-                                    column_type=ColumnTypes.LINK_FORMULA,
-                                    column_data=col_data)
+        _ = self.base.insert_column(
+            table_name=self.name,
+            column_name=col_name,
+            column_type=ColumnTypes.LINK_FORMULA,
+            column_data=col_data,
+        )
 
         # Make sure meta is updated before next use
         self._stale = True
@@ -716,25 +792,27 @@ class Table:
         other = other[other.columns[np.isin(other.columns, self.columns)]].copy()
 
         if not other.shape[1]:
-            raise ValueError('None of the columns in `other` are in table')
+            raise ValueError("None of the columns in `other` are in table")
 
         for col in other.columns:
             # Validate datatype
             validate_dtype(self, col, other[col].values)
 
             # This checks for potential int64 -> int32 issues
-            other[col] = validate_values(other[col].values,
-                                         col=self[col])
+            other[col] = validate_values(other[col].values, col=self[col])
 
         records = make_records(other)
 
-        r = batch_upload(partial(self.base.batch_append_rows, self.name),
-                         records, desc='Appending',
-                         batch_size=self.max_operations,
-                         progress=self.progress)
+        r = batch_upload(
+            partial(self.base.batch_append_rows, self.name),
+            records,
+            desc="Appending",
+            batch_size=self.max_operations,
+            progress=self.progress,
+        )
 
-        if 'success' in r:
-            logger.info('Rows successfully added!')
+        if "success" in r:
+            logger.info("Rows successfully added!")
 
     @write_access
     @check_token
@@ -760,7 +838,7 @@ class Table:
             rows = [rows]
 
         if isinstance(rows, Filter):
-            rows = self.loc[rows, '_id'].values.astype(str)
+            rows = self.loc[rows, "_id"].values.astype(str)
 
         # Pandas Boolean arrays are a specia datatype which is annoying
         # because they get converted to `object` by np.asarray by default
@@ -769,37 +847,49 @@ class Table:
         else:
             rows = np.asarray(rows)
 
-        if rows.dtype.kind == 'U':
+        if rows.dtype.kind == "U":
             miss = ~np.isin(rows, self.row_ids)
             if any(miss):
-                raise ValueError('Some of the provided row IDs do not appear '
-                                 f'to exist: {rows[miss]}')
+                raise ValueError(
+                    f"Some of the provided row IDs do not appear to exist: {rows[miss]}"
+                )
             row_ids = rows
         elif rows.dtype in (np.int64, np.int32):
             row_ids = self.row_ids[rows]
         elif rows.dtype == bool:
             if len(rows) != len(self):
-                raise ValueError(f'Length of boolean array ({len(rows)}) does not '
-                                 f'match that of table ({len(self)})')
+                raise ValueError(
+                    f"Length of boolean array ({len(rows)}) does not "
+                    f"match that of table ({len(self)})"
+                )
             row_ids = self.row_ids[rows]
         else:
-            raise TypeError('Unable to determine which rows to delete from data '
-                            f'of type "{rows.dtype}"')
+            raise TypeError(
+                "Unable to determine which rows to delete from data "
+                f'of type "{rows.dtype}"'
+            )
 
         if not skip_confirmation:
-            if input(f'Delete {len(row_ids)} rows in table "{self.name}" '
-                     f'in base "{self.base.dtable_name}"? [y/n]').lower() != 'y':
+            if (
+                input(
+                    f'Delete {len(row_ids)} rows in table "{self.name}" '
+                    f'in base "{self.base.dtable_name}"? [y/n]'
+                ).lower()
+                != "y"
+            ):
                 return
 
-        r = batch_upload(partial(self.base.batch_delete_rows, self.name),
-                         row_ids.tolist(),
-                         desc='Deleting',
-                         batch_param='row_ids',
-                         batch_size=self.max_operations,
-                         progress=self.progress)
+        r = batch_upload(
+            partial(self.base.batch_delete_rows, self.name),
+            row_ids.tolist(),
+            desc="Deleting",
+            batch_param="row_ids",
+            batch_size=self.max_operations,
+            progress=self.progress,
+        )
 
-        if 'success' in r:
-            logger.info(f'Successfully deleted {len(row_ids)} rows!')
+        if "success" in r:
+            logger.info(f"Successfully deleted {len(row_ids)} rows!")
 
     @write_access
     @check_token
@@ -813,25 +903,26 @@ class Table:
 
         """
         if not skip_confirmation:
-            if input(f'Delete table "{self.name}" '
-                     f'in "{self.base.dtable_name}"? [y/n]').lower() != 'y':
+            if (
+                input(
+                    f'Delete table "{self.name}" in "{self.base.dtable_name}"? [y/n]'
+                ).lower()
+                != "y"
+            ):
                 return
 
         url = self.base._table_server_url()
 
-        json_data = {
-                    'table_name': self.name
-                }
-        r = requests.delete(url,
-                            json=json_data,
-                            headers=self.base.headers,
-                            timeout=self.base.timeout)
+        json_data = {"table_name": self.name}
+        r = requests.delete(
+            url, json=json_data, headers=self.base.headers, timeout=self.base.timeout
+        )
         r.raise_for_status()
 
-        if 'success' in r.content.decode():
-            logger.info('Table successfully deleted!')
+        if "success" in r.content.decode():
+            logger.info("Table successfully deleted!")
         else:
-            logger.warning(f'Something went wrong: {r.content.decode()}')
+            logger.warning(f"Something went wrong: {r.content.decode()}")
 
     def time_machine(self, date, columns=None):
         """Recreate version of table at a given point in time.
@@ -854,29 +945,30 @@ class Table:
             date = dt.datetime(date.year, date.month, date.day)
 
         if date >= dt.datetime.now():
-            raise ValueError('Time travel only works backwards, not into the '
-                             'future!')
+            raise ValueError("Time travel only works backwards, not into the future!")
 
         logs = self.fetch_logs(max_time=date, unpack=True)
 
         if not columns:
             columns = self.columns
 
-        if '_id' not in columns:
-            columns = np.append(columns, '_id')
+        if "_id" not in columns:
+            columns = np.append(columns, "_id")
 
         # Grab the table
         table = self[columns]
 
         # Only keep the oldest log entry for each row/col
-        logs = logs.drop_duplicates(['row_id', 'column'], keep='last')
+        logs = logs.drop_duplicates(["row_id", "column"], keep="last")
 
         # Drop
-        logs = logs[logs.row_id.isin(table.index.values) & logs.column.isin(table.columns)]
+        logs = logs[
+            logs.row_id.isin(table.index.values) & logs.column.isin(table.columns)
+        ]
 
         for i, row in logs.iterrows():
             if isinstance(row.old_value, dict):
-                row.old_value = row.old_value['text']
+                row.old_value = row.old_value["text"]
 
             table.loc[row.row_id, row.column] = row.old_value
 
@@ -925,18 +1017,19 @@ class Table:
         page = 1
         logs = []
 
-        with tqdm(desc='Fetching logs',
-                  total=total,
-                  leave=False,
-                  disable=not progress) as pbar:
+        with tqdm(
+            desc="Fetching logs", total=total, leave=False, disable=not progress
+        ) as pbar:
             while True:
-                url = (f"{self.server}/dtable-server/api/v1/dtables/"
-                       f"{self.base.dtable_uuid}/operations/"
-                       f"?page={page}&per_page=25")  # per_page seems to be hard-coded
+                url = (
+                    f"{self.server}/dtable-server/api/v1/dtables/"
+                    f"{self.base.dtable_uuid}/operations/"
+                    f"?page={page}&per_page=25"
+                )  # per_page seems to be hard-coded
                 r = requests.get(url, headers=self.base.headers)
                 r.raise_for_status()
 
-                data = r.json()['operations']
+                data = r.json()["operations"]
 
                 # Stop if no more pages
                 if not data:
@@ -946,12 +1039,12 @@ class Table:
                 logs.append(pd.DataFrame.from_records(data))
 
                 # Parse op dictionary
-                logs[-1]['operation'] = logs[-1].operation.map(json.loads)
+                logs[-1]["operation"] = logs[-1].operation.map(json.loads)
 
                 # Drop irrelevant entries
-                table = logs[-1].operation.map(lambda x: x.get('table_id', None))
+                table = logs[-1].operation.map(lambda x: x.get("table_id", None))
 
-                # Get the last timestamp before we drop rows 
+                # Get the last timestamp before we drop rows
                 last_op = logs[-1].op_time.values[-1]
 
                 # Drop rows for other tables
@@ -985,35 +1078,37 @@ class Table:
 
         # Some clean-up:
         # Extract/parse relevant values
-        logs['op_time'] = (logs.op_time / 1e3).map(dt.datetime.fromtimestamp)
-        logs['op_type'] = logs.operation.map(lambda x: x['op_type']).astype('category')
+        logs["op_time"] = (logs.op_time / 1e3).map(dt.datetime.fromtimestamp)
+        logs["op_type"] = logs.operation.map(lambda x: x["op_type"]).astype("category")
 
-        users = self.collaborators.set_index('email').name.to_dict()
-        logs.insert(0, 'user', logs.author.map(users))
-        logs['user'] = logs['user'].astype('category')
-        logs.drop('author', inplace=True, axis=1)
+        users = self.collaborators.set_index("email").name.to_dict()
+        logs.insert(0, "user", logs.author.map(users))
+        logs["user"] = logs["user"].astype("category")
+        logs.drop("author", inplace=True, axis=1)
 
-        logs['rows_modified'] = logs.operation.map(lambda x: len(x.get('row_ids', [])))
-        logs.loc[logs.op_type == 'modify_row', 'rows_modified'] = 1
+        logs["rows_modified"] = logs.operation.map(lambda x: len(x.get("row_ids", [])))
+        logs.loc[logs.op_type == "modify_row", "rows_modified"] = 1
 
-        col = logs.pop('operation')
-        logs['details'] = col
+        col = logs.pop("operation")
+        logs["details"] = col
 
         def clean_details(x):
             """Run some clean up on the details column."""
             # Pop some values we don't need (anymore)
-            _ = x.pop('table_id', '')
-            _ = x.pop('op_type', '')
+            _ = x.pop("table_id", "")
+            _ = x.pop("op_type", "")
 
             return x
 
-        logs['details'] = logs.details.map(clean_details)
+        logs["details"] = logs.details.map(clean_details)
 
         logs = logs.reset_index(drop=True)
 
         if unpack:
             unpacked = []
-            for row in logs[logs.op_type.isin(['modify_rows', 'modify_row'])].itertuples():
+            for row in logs[
+                logs.op_type.isin(["modify_rows", "modify_row"])
+            ].itertuples():
                 user = row.user
                 app = row.app
                 op_time = row.op_time
@@ -1022,34 +1117,46 @@ class Table:
                 details = row.details
 
                 # If single row turn it into a fake multi row edit
-                if row.op_type == 'modify_row':
-                    row_id = details['row_id']
-                    details['row_ids'] = [row_id]
-                    details['updated'] = {row_id: details['updated']}
-                    details['old_rows'] = {row_id: details['old_row']}
+                if row.op_type == "modify_row":
+                    row_id = details["row_id"]
+                    details["row_ids"] = [row_id]
+                    details["updated"] = {row_id: details["updated"]}
+                    details["old_rows"] = {row_id: details["old_row"]}
 
-                for id in details['row_ids']:
-                    for col, new_value in details['updated'][id].items():
+                for id in details["row_ids"]:
+                    for col, new_value in details["updated"][id].items():
                         # Skip internal columns like '_last_modifier'
-                        if col.startswith('_'):
+                        if col.startswith("_"):
                             continue
-                        old_value = details['old_rows'][id].get(col, None)
-                        unpacked.append([user, app, op_time, op_id,
-                                         id, col, old_value, new_value])
+                        old_value = details["old_rows"][id].get(col, None)
+                        unpacked.append(
+                            [user, app, op_time, op_id, id, col, old_value, new_value]
+                        )
 
-            logs = pd.DataFrame(unpacked,
-                                columns=['user', 'app', 'op_time', 'op_id',
-                                         'row_id', 'column',
-                                         'old_value', 'new_value'])
+            logs = pd.DataFrame(
+                unpacked,
+                columns=[
+                    "user",
+                    "app",
+                    "op_time",
+                    "op_id",
+                    "row_id",
+                    "column",
+                    "old_value",
+                    "new_value",
+                ],
+            )
 
-            logs['column'] = self._col_ids_to_names(logs.column.values)
-            for c in ['user', 'app', 'column']:
-                logs[c] = logs[c].astype('category')
+            logs["column"] = self._col_ids_to_names(logs.column.values)
+            for c in ["user", "app", "column"]:
+                logs[c] = logs[c].astype("category")
 
         return logs
 
     @check_token
-    def fetch_row_logs(self, ids, max_entries=25, max_time=None, unpack=True, progress=True):
+    def fetch_row_logs(
+        self, ids, max_entries=25, max_time=None, unpack=True, progress=True
+    ):
         """Fetch activity logs for given row(s).
 
         Parameters
@@ -1098,21 +1205,22 @@ class Table:
             ids = ids.index.values
 
         logs = []
-        for i in tqdm(ids, leave=False, disable=not progress, desc='Rows'):
-            with tqdm(desc='Fetching logs',
-                      total=total,
-                      leave=False,
-                      disable=not progress) as pbar:
+        for i in tqdm(ids, leave=False, disable=not progress, desc="Rows"):
+            with tqdm(
+                desc="Fetching logs", total=total, leave=False, disable=not progress
+            ) as pbar:
                 entries = 0
                 page = 1
                 while True:
-                    url = (f"{self.server}/dtable-server/api/v1/dtables/"
-                           f"{self.base.dtable_uuid}/activities/"
-                           f"?row_id={i}&page={page}&per_page=25")  # per_page seems to be hard-coded
+                    url = (
+                        f"{self.server}/dtable-server/api/v1/dtables/"
+                        f"{self.base.dtable_uuid}/activities/"
+                        f"?row_id={i}&page={page}&per_page=25"
+                    )  # per_page seems to be hard-coded
                     r = requests.get(url, headers=self.base.headers)
                     r.raise_for_status()
 
-                    data = r.json()['activities']
+                    data = r.json()["activities"]
 
                     # Stop if no more pages
                     if not data:
@@ -1122,10 +1230,10 @@ class Table:
                     logs.append(pd.DataFrame.from_records(data))
 
                     # Parse op dictionary
-                    logs[-1]['activities'] = logs[-1].operation.map(json.loads)
+                    logs[-1]["activities"] = logs[-1].operation.map(json.loads)
 
                     # Drop irrelevant entries
-                    table = logs[-1].operation.map(lambda x: x.get('table_id', None))
+                    table = logs[-1].operation.map(lambda x: x.get("table_id", None))
                     logs[-1] = logs[-1][table == self.id]
 
                     entries += logs[-1].shape[0]
@@ -1158,35 +1266,37 @@ class Table:
 
         # Some clean-up:
         # Extract/parse relevant values
-        logs['op_time'] = (logs.op_time / 1e3).map(dt.datetime.fromtimestamp)
-        logs['op_type'] = logs.operation.map(lambda x: x['op_type']).astype('category')
+        logs["op_time"] = (logs.op_time / 1e3).map(dt.datetime.fromtimestamp)
+        logs["op_type"] = logs.operation.map(lambda x: x["op_type"]).astype("category")
 
-        users = self.collaborators.set_index('email').name.to_dict()
-        logs.insert(0, 'user', logs.author.map(users))
-        logs['user'] = logs['user'].astype('category')
-        logs.drop('author', inplace=True, axis=1)
+        users = self.collaborators.set_index("email").name.to_dict()
+        logs.insert(0, "user", logs.author.map(users))
+        logs["user"] = logs["user"].astype("category")
+        logs.drop("author", inplace=True, axis=1)
 
-        logs['rows_modified'] = logs.operation.map(lambda x: len(x.get('row_ids', [])))
-        logs.loc[logs.op_type == 'modify_row', 'rows_modified'] = 1
+        logs["rows_modified"] = logs.operation.map(lambda x: len(x.get("row_ids", [])))
+        logs.loc[logs.op_type == "modify_row", "rows_modified"] = 1
 
-        col = logs.pop('operation')
-        logs['details'] = col
+        col = logs.pop("operation")
+        logs["details"] = col
 
         def clean_details(x):
             """Run some clean up on the details column."""
             # Pop some values we don't need (anymore)
-            _ = x.pop('table_id', '')
-            _ = x.pop('op_type', '')
+            _ = x.pop("table_id", "")
+            _ = x.pop("op_type", "")
 
             return x
 
-        logs['details'] = logs.details.map(clean_details)
+        logs["details"] = logs.details.map(clean_details)
 
         logs = logs.reset_index(drop=True)
 
         if unpack:
             unpacked = []
-            for row in logs[logs.op_type.isin(['modify_rows', 'modify_row'])].itertuples():
+            for row in logs[
+                logs.op_type.isin(["modify_rows", "modify_row"])
+            ].itertuples():
                 user = row.user
                 app = row.app
                 op_time = row.op_time
@@ -1194,29 +1304,39 @@ class Table:
                 details = row.details
 
                 # If single row turn it into a fake multi row edit
-                if row.op_type == 'modify_row':
-                    row_id = details['row_id']
-                    details['row_ids'] = [row_id]
-                    details['updated'] = {row_id: details['updated']}
-                    details['old_rows'] = {row_id: details['old_row']}
+                if row.op_type == "modify_row":
+                    row_id = details["row_id"]
+                    details["row_ids"] = [row_id]
+                    details["updated"] = {row_id: details["updated"]}
+                    details["old_rows"] = {row_id: details["old_row"]}
 
-                for id in details['row_ids']:
-                    for col, new_value in details['updated'][id].items():
+                for id in details["row_ids"]:
+                    for col, new_value in details["updated"][id].items():
                         # Skip internal columns like '_last_modifier'
-                        if col.startswith('_'):
+                        if col.startswith("_"):
                             continue
-                        old_value = details['old_rows'][id].get(col, None)
-                        unpacked.append([user, app, op_time, op_id,
-                                         id, col, old_value, new_value])
+                        old_value = details["old_rows"][id].get(col, None)
+                        unpacked.append(
+                            [user, app, op_time, op_id, id, col, old_value, new_value]
+                        )
 
-            logs = pd.DataFrame(unpacked,
-                                columns=['user', 'app', 'op_time', 'op_id',
-                                         'row_id', 'column',
-                                         'old_value', 'new_value'])
+            logs = pd.DataFrame(
+                unpacked,
+                columns=[
+                    "user",
+                    "app",
+                    "op_time",
+                    "op_id",
+                    "row_id",
+                    "column",
+                    "old_value",
+                    "new_value",
+                ],
+            )
 
-            logs['column'] = self._col_ids_to_names(logs.column.values)
-            for c in ['user', 'app', 'column']:
-                logs[c] = logs[c].astype('category')
+            logs["column"] = self._col_ids_to_names(logs.column.values)
+            for c in ["user", "app", "column"]:
+                logs[c] = logs[c].astype("category")
 
         return logs
 
@@ -1225,7 +1345,11 @@ class Table:
         """Fetch/update meta data for table and base."""
         self.base_meta = self.base.get_metadata()
 
-        meta = [t for t in self.base_meta['tables'] if t['name'] == self.name or t['_id'] == self.name]
+        meta = [
+            t
+            for t in self.base_meta["tables"]
+            if t["name"] == self.name or t["_id"] == self.name
+        ]
 
         if len(meta) == 0:
             raise ValueError(f'No table with name "{self.name}" in base')
@@ -1236,11 +1360,12 @@ class Table:
 
         # Check for duplicate columns
         seen = []
-        for col in meta.get('columns', []):
-            if col['name'] in seen:
-                raise ValueError(f'Table {self.name} contains duplicate '
-                                 f'column(s): {col["name"]}')
-            seen.append(col['name'])
+        for col in meta.get("columns", []):
+            if col["name"] in seen:
+                raise ValueError(
+                    f"Table {self.name} contains duplicate column(s): {col['name']}"
+                )
+            seen.append(col["name"])
 
         self._meta = meta
         return self._meta
@@ -1268,13 +1393,15 @@ class Table:
         if isinstance(view, str):
             if view not in self.views:
                 raise ValueError(f'"{view}" not found')
-            view = [v for v in self.meta['views'] if v['name'] == view]
+            view = [v for v in self.meta["views"] if v["name"] == view]
             if len(view) > 1:
-                raise ValueError(f'Found multiple views with name "{view}". '
-                                 'Consider using an index instead.')
+                raise ValueError(
+                    f'Found multiple views with name "{view}". '
+                    "Consider using an index instead."
+                )
             view = view[0]
         elif isinstance(view, int):
-            view = self.meta['views'][view]
+            view = self.meta["views"][view]
         else:
             raise TypeError(f'Expected `view` to be str or int, got "{type(view)}"')
 
@@ -1283,71 +1410,75 @@ class Table:
         # queries like "(fieldA != 'value1') AND (fieldB != 'value2')"
         # Instead we need to combine them to
         # "(fieldA not in ('value1', 'value2')"
-        view['filters_grp'] = {}
-        for f in view['filters']:
+        view["filters_grp"] = {}
+        for f in view["filters"]:
             # Translate col IDs to names while we're at it
-            col_name = [c['name'] for c in self.meta['columns'] if c['key'] == f['column_key']][0]
-            if col_name not in view['filters_grp']:
-                view['filters_grp'][col_name] = {}
+            col_name = [
+                c["name"] for c in self.meta["columns"] if c["key"] == f["column_key"]
+            ][0]
+            if col_name not in view["filters_grp"]:
+                view["filters_grp"][col_name] = {}
 
-            pred = f['filter_predicate']
-            if pred not in view['filters_grp'][col_name]:
-                view['filters_grp'][col_name][pred] = []
-            view['filters_grp'][col_name][pred].append(f['filter_term'])
+            pred = f["filter_predicate"]
+            if pred not in view["filters_grp"][col_name]:
+                view["filters_grp"][col_name][pred] = []
+            view["filters_grp"][col_name][pred].append(f["filter_term"])
 
         filters = []
-        for col_name in view['filters_grp']:
+        for col_name in view["filters_grp"]:
             # Get the column with this name
             col = self[col_name]
 
             # Map IDs to actual values (if applicable)
-            for predicate in view['filters_grp'][col_name]:
-                terms = view['filters_grp'][col_name][predicate]
+            for predicate in view["filters_grp"][col_name]:
+                terms = view["filters_grp"][col_name][predicate]
 
-                if predicate == 'is' and len(terms) > 1:
-                    predicate = 'is_any_of'
-                elif predicate == 'is_not' and len(terms) > 1:
-                    predicate = 'is_none_of'
+                if predicate == "is" and len(terms) > 1:
+                    predicate = "is_any_of"
+                elif predicate == "is_not" and len(terms) > 1:
+                    predicate = "is_none_of"
 
                 terms = flatten(terms)
                 terms = col._ids_to_values(terms)
 
                 # Flatten a potential list of lists
-                if predicate == 'is':
+                if predicate == "is":
                     filters.append(col == terms[0])
-                elif predicate == 'is_not':
+                elif predicate == "is_not":
                     filters.append(col != terms[0])
-                elif predicate == 'is_not_empty':
+                elif predicate == "is_not_empty":
                     filters.append(col.notnull())
-                elif predicate == 'is_empty':
+                elif predicate == "is_empty":
                     filters.append(col.isnull())
-                elif predicate == 'is_none_of':
+                elif predicate == "is_none_of":
                     filters.append(~col.isin(terms))
-                elif predicate == 'is_any_of':
+                elif predicate == "is_any_of":
                     filters.append(col.isin(terms))
-                elif predicate == 'contains':
+                elif predicate == "contains":
                     for t in terms:
                         filters.append(col.contains(t))
-                elif predicate == 'does_not_contain':
+                elif predicate == "does_not_contain":
                     for t in terms:
                         filters.append(~col.contains(t))
                 else:
-                    raise ValueError(f'Unsupported filter predicate: "{f["filter_predicate"]}"')
+                    raise ValueError(
+                        f'Unsupported filter predicate: "{f["filter_predicate"]}"'
+                    )
 
-        conj = view.get('filter_conjunction', 'AND')
-        comb = Filter(f' {conj} '.join([f'({f.query})' for f in filters]))
+        conj = view.get("filter_conjunction", "AND")
+        comb = Filter(f" {conj} ".join([f"({f.query})" for f in filters]))
 
         if hide_cols:
-            hidden_cols = self._col_ids_to_names(view.get('hidden_columns', []))
+            hidden_cols = self._col_ids_to_names(view.get("hidden_columns", []))
             cols = [c for c in self.columns if c not in hidden_cols]
 
             data = self.loc[comb, cols]
         else:
             data = self.loc[comb]
 
-        if sort and view.get('sorts', None):
-            cols = self._col_ids_to_names([s['column_key'] for s in view['sorts']])
-            asc = [True if s['sort_type'] == 'up' else False for s in view['sorts']]
+        if sort and view.get("sorts", None):
+            cols = self._col_ids_to_names([s["column_key"] for s in view["sorts"]])
+            asc = [True if s["sort_type"] == "up" else False for s in view["sorts"]]
 
             data = data.sort_values(cols, ascending=asc)
 
@@ -1355,14 +1486,23 @@ class Table:
 
     def head(self, n=5):
         """Return top N rows as pandas DataFrame."""
-        data = self.base.query(f'SELECT * FROM {self.name} LIMIT {n}')
-        return process_records(data, columns=self.columns,
-                               dtypes=self.dtypes.to_dict() if self.sanitize else None)
+        data = self.base.query(f"SELECT * FROM {self.name} LIMIT {n}")
+        return process_records(
+            data,
+            columns=self.columns,
+            dtypes=self.dtypes.to_dict() if self.sanitize else None,
+        )
 
     @write_access
     @check_token
-    def link(self, other_table, link_on=None, link_on_other=None,
-             link_col=None, multi_match=True):
+    def link(
+        self,
+        other_table,
+        link_on=None,
+        link_on_other=None,
+        link_col=None,
+        multi_match=True,
+    ):
         """Link rows in this table to rows in other table.
 
         Parameters
@@ -1394,8 +1534,9 @@ class Table:
         other = Table(other_table, base=self.base)
 
         if link_on_other and link_on_other not in other.columns:
-            raise ValueError(f'Column to link on "{link_on_other}" does not '
-                             'exist in other table.')
+            raise ValueError(
+                f'Column to link on "{link_on_other}" does not exist in other table.'
+            )
         elif not link_on_other:
             link_on_other = other.columns[0]
 
@@ -1408,14 +1549,19 @@ class Table:
             link_on = self.columns[0]
 
         if not link_col:
-            link_col = f'link_{other_table}'
+            link_col = f"link_{other_table}"
 
         # Get the data we need to merge on
         link_data = self[link_on].to_series()
         link_data_other = other[link_on_other].to_series()
 
         # Turn other into a dict of {value: [row_id1, row_id2, ...]}
-        link_dict_other = link_data_other.reset_index(drop=False).groupby(link_data_other.name).row_id.apply(list).to_dict()
+        link_dict_other = (
+            link_data_other.reset_index(drop=False)
+            .groupby(link_data_other.name)
+            .row_id.apply(list)
+            .to_dict()
+        )
 
         # Map row IDs in this DataFrame to those in others
         # {row_id: [other_row_id1, other_row_id2], ...}
@@ -1430,39 +1576,56 @@ class Table:
 
         # Add link column if doesn't already exists:
         if link_col not in self.columns:
-            self.add_column(col_name=link_col, col_type='link',
-                            col_data={'table': self.name,
-                                      'other_table': other_table,
-                                      'is_multiple': False})
+            self.add_column(
+                col_name=link_col,
+                col_type="link",
+                col_data={
+                    "table": self.name,
+                    "other_table": other_table,
+                    "is_multiple": False,
+                },
+            )
 
         # Add obsolete links that need to be removed (= set them to [])
-        other_rows_ids_map.update({k: [] for k in link_data.index.values if k not in other_rows_ids_map})
+        other_rows_ids_map.update(
+            {k: [] for k in link_data.index.values if k not in other_rows_ids_map}
+        )
 
-        link_id = self[link_col].meta['data']['link_id']
+        link_id = self[link_col].meta["data"]["link_id"]
         table_id = self.id
         other_table_id = other.id
         row_id_list = list(other_rows_ids_map.keys())
 
         # Update links in batches
-        for i in trange(0, len(row_id_list), self.max_operations,
-                        disable=len(row_id_list) < self.max_operations,
-                        desc='Linking'):
-            batch_row_id_list = row_id_list[i: i + self.max_operations]
-            batch_other_rows_ids_map = {k: v for k, v in other_rows_ids_map.items() if k in batch_row_id_list}
+        for i in trange(
+            0,
+            len(row_id_list),
+            self.max_operations,
+            disable=len(row_id_list) < self.max_operations,
+            desc="Linking",
+        ):
+            batch_row_id_list = row_id_list[i : i + self.max_operations]
+            batch_other_rows_ids_map = {
+                k: v for k, v in other_rows_ids_map.items() if k in batch_row_id_list
+            }
 
-            self.base.batch_update_links(link_id,
-                                         table_id,
-                                         other_table_id,
-                                         batch_row_id_list,
-                                         batch_other_rows_ids_map)
+            self.base.batch_update_links(
+                link_id,
+                table_id,
+                other_table_id,
+                batch_row_id_list,
+                batch_other_rows_ids_map,
+            )
 
     def to_frame(self, row_id_index=True):
         """Download entire table as pandas DataFrame."""
-        data = self.base.query(f'SELECT * FROM {self.name} LIMIT {self.shape[0]}')
-        return process_records(data,
-                               columns=self.columns,
-                               row_id_index=row_id_index,
-                               dtypes=self.dtypes.to_dict() if self.sanitize else None)
+        data = self.base.query(f"SELECT * FROM {self.name} LIMIT {self.shape[0]}")
+        return process_records(
+            data,
+            columns=self.columns,
+            row_id_index=row_id_index,
+            dtypes=self.dtypes.to_dict() if self.sanitize else None,
+        )
 
     @check_token
     def query(self, query, no_limit=False, convert=True):
@@ -1489,13 +1652,13 @@ class Table:
 
         """
         if isinstance(query, Filter):
-            query = f'SELECT * from {self.name} WHERE {query.query}'
+            query = f"SELECT * from {self.name} WHERE {query.query}"
 
-        if 'from' not in query.lower():
-            query = f'{query} FROM {self.name}'
-        if no_limit and 'LIMIT' not in query:
-            query += f' LIMIT {self.shape[0]}'
-        logger.debug(f'Running SQL query: {query}')
+        if "from" not in query.lower():
+            query = f"{query} FROM {self.name}"
+        if no_limit and "LIMIT" not in query:
+            query += f" LIMIT {self.shape[0]}"
+        logger.debug(f"Running SQL query: {query}")
         return self.base.query(query, convert=convert)
 
 
@@ -1507,7 +1670,7 @@ class Column:
         self.table = table
 
     def __array__(self, dtype=None):
-         return np.array(self.values, dtype=dtype)
+        return np.array(self.values, dtype=dtype)
 
     def __repr__(self):
         return self.__str__()
@@ -1529,10 +1692,10 @@ class Column:
             return Filter(f"{self.name} = {other}")
 
     def __ne__(self, other):
-        return Filter((self == other).query.replace('=', '!='))
+        return Filter((self == other).query.replace("=", "!="))
 
     def __ge__(self, other):
-        return Filter((self > other).query.replace('>', '>='))
+        return Filter((self > other).query.replace(">", ">="))
 
     def __gt__(self, other):
         _ = validate_comparison(self, other)
@@ -1541,7 +1704,7 @@ class Column:
         raise TypeError(f"'>' not supported between column and {type(other)}")
 
     def __le__(self, other):
-        return Filter((self < other).query.replace('<', '<='))
+        return Filter((self < other).query.replace("<", "<="))
 
     def __lt__(self, other):
         _ = validate_comparison(self, other)
@@ -1551,27 +1714,29 @@ class Column:
 
     def __and__(self, other):
         if isinstance(other, Column):
-            if other.dtype == 'checkbox':
-                return Filter(f'{self.name} AND {other.name}')
+            if other.dtype == "checkbox":
+                return Filter(f"{self.name} AND {other.name}")
         elif isinstance(other, Filter):
-            if self.dtype == 'checkbox':
-                return Filter(f'{self.name}') & other
+            if self.dtype == "checkbox":
+                return Filter(f"{self.name}") & other
             else:
-                raise TypeError('Unable to construct filter from column of '
-                                f'type {self.dtype}')
+                raise TypeError(
+                    f"Unable to construct filter from column of type {self.dtype}"
+                )
 
         raise TypeError(f'Unable to combine Column and "{type(other)}"')
 
     def __or__(self, other):
         if isinstance(other, Column):
-            if other.dtype == 'checkbox':
-                return Filter(f'{self.name} OR {other.name}')
+            if other.dtype == "checkbox":
+                return Filter(f"{self.name} OR {other.name}")
         elif isinstance(other, Filter):
-            if self.dtype == 'checkbox':
-                return Filter(f'{self.name}') | other
+            if self.dtype == "checkbox":
+                return Filter(f"{self.name}") | other
             else:
-                raise TypeError('Unable to construct filter from column of '
-                                f'type {self.dtype}')
+                raise TypeError(
+                    f"Unable to construct filter from column of type {self.dtype}"
+                )
 
         raise TypeError(f'Unable to combine Column and "{type(other)}"')
 
@@ -1579,19 +1744,21 @@ class Column:
         # Add quotation marks to string
         if isinstance(value, str):
             value = f"'{value}'"
-        q = (f"SELECT {self.name} "
-             f"FROM {self.table.name} "
-             f"WHERE {self.name} = {value} "
-             "LIMIT 1")
+        q = (
+            f"SELECT `{self.name}` "
+            f"FROM {self.table.name} "
+            f"WHERE {self.name} = {value} "
+            "LIMIT 1"
+        )
         return any(self.table.query(q))
 
     @property
     def key(self):
         """Unique identifier of this column."""
         keys = []
-        for col in self.table.meta['columns']:
-            if col['name'] == self.name:
-                keys.append(col['key'])
+        for col in self.table.meta["columns"]:
+            if col["name"] == self.name:
+                keys.append(col["key"])
 
         if len(keys) > 1:
             raise ValueError(f'Found multiple columns with name "{self.name}"')
@@ -1600,23 +1767,22 @@ class Column:
 
     @property
     def dtype(self):
-        return self.meta['type']
+        return self.meta["type"]
 
     @property
     def meta(self):
         """Meta data for this column."""
-        if self.name == '_id':
-            return {'type': str, 'key': None}
+        if self.name == "_id":
+            return {"type": str, "key": None}
         else:
-            return [c for c in self.table.meta['columns'] if c['name'] == self.name][0]
+            return [c for c in self.table.meta["columns"] if c["name"] == self.name][0]
 
     @property
     def options(self):
         """Options for single- or multi-select columns."""
-        if 'select' not in self.dtype:
-            raise TypeError('`options` only exists for single- or multi-select '
-                            'columns')
-        return np.array([r['name'] for r in self.meta['data']['options']])
+        if "select" not in self.dtype:
+            raise TypeError("`options` only exists for single- or multi-select columns")
+        return np.array([r["name"] for r in self.meta["data"]["options"]])
 
     @property
     def values(self):
@@ -1637,19 +1803,19 @@ class Column:
         value(s)
 
         """
-        if 'data' not in self.meta or not self.meta['data']:
+        if "data" not in self.meta or not self.meta["data"]:
             return ids
-        if 'options' not in self.meta['data']:
+        if "options" not in self.meta["data"]:
             return ids
 
-        id_map = {r['id']: r['name'] for r in self.meta['data']['options']}
+        id_map = {r["id"]: r["name"] for r in self.meta["data"]["options"]}
 
         if not is_iterable(ids):
             return id_map[ids]
 
         return [id_map[i] for i in ids]
 
-    def astype(self, dtype, errors='raise'):
+    def astype(self, dtype, errors="raise"):
         """Download and cast data to specified dtype ``dtype``.
 
         Parameters
@@ -1672,36 +1838,39 @@ class Column:
 
     def to_series(self):
         """Return this column as pandas.Series."""
-        if self.name != '_id':
-            query = f'SELECT {self.name}, _id'
+        if self.name != "_id":
+            query = f"SELECT `{self.name}`, _id"
         else:
-            query = f'SELECT {self.name}'
+            query = f"SELECT `{self.name}`"
         rows = self.table.query(query, no_limit=True)
-        return process_records(rows,
-                               row_id_index=self.name != '_id',
-                               dtypes={self.name: self.dtype} if self.table.sanitize else None
-                               ).iloc[:, 0]
+        return process_records(
+            rows,
+            row_id_index=self.name != "_id",
+            dtypes={self.name: self.dtype} if self.table.sanitize else None,
+        ).iloc[:, 0]
 
     @write_access
     @check_token
     def clear(self):
         """Clear this column."""
         if not self.key:
-            raise ValueError(f'Unable to clear column {self.name}')
+            raise ValueError(f"Unable to clear column {self.name}")
 
         row_ids = self.table.row_ids
 
-        records = [{'row_id': r,
-                    'row': {self.name: None}} for r in row_ids]
+        records = [{"row_id": r, "row": {self.name: None}} for r in row_ids]
 
         if not self.table._hold:
-            r = batch_upload(partial(self.table.base.batch_update_rows, self.table.name),
-                             records, desc='Clearing',
-                             batch_size=self.table.max_operations,
-                             progress=self.table.progress)
+            r = batch_upload(
+                partial(self.table.base.batch_update_rows, self.table.name),
+                records,
+                desc="Clearing",
+                batch_size=self.table.max_operations,
+                progress=self.table.progress,
+            )
 
-            if 'success' in r:
-                logger.info('Clear successful!')
+            if "success" in r:
+                logger.info("Clear successful!")
         else:
             self.table._queue += records
 
@@ -1710,13 +1879,13 @@ class Column:
     def delete(self):
         """Delete this column."""
         if not self.key:
-            raise ValueError(f'Unable to delete column {self.name}')
+            raise ValueError(f"Unable to delete column {self.name}")
 
         self.table._stale = True
         resp = self.table.base.delete_column(self.table.name, self.key)
 
-        if not resp.get('success'):
-            raise ValueError(f'Error writing to table: {resp}')
+        if not resp.get("success"):
+            raise ValueError(f"Error writing to table: {resp}")
 
         # Update table meta data
         _ = self.table.fetch_meta()
@@ -1728,27 +1897,33 @@ class Column:
         if not isinstance(pat, str):
             raise TypeError(f'`pat` must be str, not "{type(pat)}"')
 
-        if self.dtype == 'text':
+        if self.dtype == "text":
             return Filter(f"{self.name} LIKE '%{pat}%'")
-        elif self.dtype in ('single-select', 'multiple-select'):
+        elif self.dtype in ("single-select", "multiple-select"):
             return self.isin([o for o in self.options if pat in o])
-        raise ValueError('Can only Filter by substring if Column is of '
-                         f'type "text" or single-/multiple-select, not {self.dtype}')
+        raise ValueError(
+            "Can only Filter by substring if Column is of "
+            f'type "text" or single-/multiple-select, not {self.dtype}'
+        )
 
     def startswith(self, pat):
         """Filter to strings starting with given substring."""
-        if self.dtype != 'text':
-            raise ValueError('Can only Filter by substring if Column is of '
-                             f'type "text", not {self.dtype}')
+        if self.dtype != "text":
+            raise ValueError(
+                "Can only Filter by substring if Column is of "
+                f'type "text", not {self.dtype}'
+            )
         if not isinstance(pat, str):
             raise TypeError(f'`pat` must be str, not "{type(pat)}"')
         return Filter(f"{self.name} LIKE '{pat}%'")
 
     def endswith(self, pat):
         """Filter to strings ending with given substring."""
-        if self.dtype != 'text':
-            raise ValueError('Can only Filter by substring if Column is of '
-                             f'type "text", not {self.dtype}')
+        if self.dtype != "text":
+            raise ValueError(
+                "Can only Filter by substring if Column is of "
+                f'type "text", not {self.dtype}'
+            )
         if not isinstance(pat, str):
             raise TypeError(f'`pat` must be str, not "{type(pat)}"')
         return Filter(f"{self.name} LIKE '%{pat}'")
@@ -1780,7 +1955,7 @@ class Column:
             return self == other
 
         if len(other) == 0:
-            raise ValueError('Unable to compare empty container')
+            raise ValueError("Unable to compare empty container")
         elif len(other) == 1:
             return self == other[0]
 
@@ -1807,7 +1982,7 @@ class Column:
         Filter
 
         """
-        if empty_str and self.dtype == 'text':
+        if empty_str and self.dtype == "text":
             return Filter(f"{self.name} IS NULL or {self.name} = ''")
         else:
             return Filter(f"{self.name} IS NULL")
@@ -1826,7 +2001,7 @@ class Column:
         Filter
 
         """
-        if empty_str and self.dtype == 'text':
+        if empty_str and self.dtype == "text":
             return Filter(f"{self.name} IS NOT NULL and {self.name} != ''")
         else:
             return Filter(f"{self.name} IS NOT NULL")
@@ -1869,16 +2044,14 @@ class Column:
 
         self.table._stale = True
 
-        resp = self.table.base.rename_column(self.table.name,
-                                             self.key,
-                                             new_name)
+        resp = self.table.base.rename_column(self.table.name, self.key, new_name)
 
         self.table._stale = True
 
-        if 'name' not in resp:
-            raise ValueError(f'Error writing to table: {resp}')
+        if "name" not in resp:
+            raise ValueError(f"Error writing to table: {resp}")
 
-        logger.info(f'Column renamed: {self.name} -> {self.new_name}')
+        logger.info(f"Column renamed: {self.name} -> {self.new_name}")
 
         # Update table meta data
         _ = self.table.fetch_meta()
@@ -1903,15 +2076,13 @@ class Column:
         except BaseException:
             raise
 
-        resp = self.table.base.resize_column(self.table.name,
-                                             self.key,
-                                             width)
+        resp = self.table.base.resize_column(self.table.name, self.key, width)
         self.table._stale = True
 
-        if 'name' not in resp:
-            raise ValueError(f'Error writing to table: {resp}')
+        if "name" not in resp:
+            raise ValueError(f"Error writing to table: {resp}")
 
-        logger.debug(f'Column {self.name} resized.')
+        logger.debug(f"Column {self.name} resized.")
 
     @write_access
     @check_token
@@ -1921,13 +2092,11 @@ class Column:
         Use unfreeze() method to unfreeze column.
 
         """
-        resp = self.table.base.freeze_column(self.table.name,
-                                             self.key,
-                                             frozen=True)
-        if 'name' not in resp:
-            raise ValueError(f'Error writing to table: {resp}')
+        resp = self.table.base.freeze_column(self.table.name, self.key, frozen=True)
+        if "name" not in resp:
+            raise ValueError(f"Error writing to table: {resp}")
 
-        logger.debug(f'Column {self.name} frozen.')
+        logger.debug(f"Column {self.name} frozen.")
 
     @write_access
     @check_token
@@ -1937,21 +2106,21 @@ class Column:
         Use freeze() method to freeze column.
 
         """
-        resp = self.table.base.freeze_column(self.table.name,
-                                             self.key,
-                                             frozen=False)
-        if 'name' not in resp:
-            raise ValueError(f'Error writing to table: {resp}')
+        resp = self.table.base.freeze_column(self.table.name, self.key, frozen=False)
+        if "name" not in resp:
+            raise ValueError(f"Error writing to table: {resp}")
 
-        logger.debug(f'Column {self.name} unfrozen.')
+        logger.debug(f"Column {self.name} unfrozen.")
 
     def unique(self):
         """Return unique values in this column."""
-        rows = self.table.query(f'SELECT DISTINCT {self.name}', no_limit=True)
+        rows = self.table.query(f"SELECT DISTINCT `{self.name}`", no_limit=True)
 
-        return process_records(rows,
-                               dtypes=self.dtype if self.table.sanitize else None
-                               ).iloc[:, 0].values
+        return (
+            process_records(rows, dtypes=self.dtype if self.table.sanitize else None)
+            .iloc[:, 0]
+            .values
+        )
 
     def update(self, values):
         """Update this column with given values.
@@ -1969,8 +2138,10 @@ class Column:
 
         l = len(self)
         if len(values) != l:
-            raise ValueError(f'Length of values ({len(values)}) does not '
-                             f'match length of column ({l})')
+            raise ValueError(
+                f"Length of values ({len(values)}) does not "
+                f"match length of column ({l})"
+            )
 
         # Convert np.nan to None
         # This is required because we want to treat np.nan like None
@@ -2013,20 +2184,23 @@ class Column:
                     A list/array of strings.
 
         """
-        if self.dtype not in ('single-select', 'multi-select'):
-            raise TypeError('Can only set options for single- or multi-select '
-                            f'columns. This column is of type "{self.dtype}".')
+        if self.dtype not in ("single-select", "multi-select"):
+            raise TypeError(
+                "Can only set options for single- or multi-select "
+                f'columns. This column is of type "{self.dtype}".'
+            )
 
         if not isinstance(options, (list, set, np.ndarray)):
-            raise ValueError('`options` must be list, set or array - got '
-                             f'type({self.options})')
+            raise ValueError(
+                f"`options` must be list, set or array - got type({self.options})"
+            )
 
         if not all([isinstance(e, dict) for e in options]):
-            payload = [{
-                        'name': str(o),
-                        'color': '#aaa',
-                        'textColor': '#000000'
-                        } for o in options if o]
+            payload = [
+                {"name": str(o), "color": "#aaa", "textColor": "#000000"}
+                for o in options
+                if o
+            ]
         else:
             payload = options
 
@@ -2035,7 +2209,7 @@ class Column:
         # Update table meta data
         _ = self.table.fetch_meta()
 
-        logger.info(f'Added column options: {options}')
+        logger.info(f"Added column options: {options}")
 
 
 class Filter:
@@ -2051,44 +2225,45 @@ class Filter:
         return f'SQL filter query <"{self.query}">'
 
     def __invert__(self):
-        if ' AND ' in self.query or ' or ' in self.query:
-            raise ValueError('Unable to invert Filter combinations')
-        elif ' = ' in self.query:
-            return Filter(self.query.replace(' = ', ' != '))
-        elif ' != ' in self.query:
-            return Filter(self.query.replace(' != ', ' = '))
-        elif ' NOT IN ' in self.query:
-            return Filter(self.query.replace(' NOT IN ', ' IN '))
-        elif ' IN ' in self.query:
-            return Filter(self.query.replace(' IN ', ' NOT IN '))
-        elif ' IS NOT ' in self.query:
-            return Filter(self.query.replace(' IS NOT ', ' IS '))
-        elif ' IS ' in self.query:
-            return Filter(self.query.replace(' IS ', ' IS NOT '))
-        elif ' NOT LIKE ' in self.query:
-            return Filter(self.query.replace(' NOT LIKE ', ' LIKE '))
-        elif ' LIKE ' in self.query:
-            return Filter(self.query.replace(' LIKE ', ' NOT LIKE '))
+        if " AND " in self.query or " or " in self.query:
+            raise ValueError("Unable to invert Filter combinations")
+        elif " = " in self.query:
+            return Filter(self.query.replace(" = ", " != "))
+        elif " != " in self.query:
+            return Filter(self.query.replace(" != ", " = "))
+        elif " NOT IN " in self.query:
+            return Filter(self.query.replace(" NOT IN ", " IN "))
+        elif " IN " in self.query:
+            return Filter(self.query.replace(" IN ", " NOT IN "))
+        elif " IS NOT " in self.query:
+            return Filter(self.query.replace(" IS NOT ", " IS "))
+        elif " IS " in self.query:
+            return Filter(self.query.replace(" IS ", " IS NOT "))
+        elif " NOT LIKE " in self.query:
+            return Filter(self.query.replace(" NOT LIKE ", " LIKE "))
+        elif " LIKE " in self.query:
+            return Filter(self.query.replace(" LIKE ", " NOT LIKE "))
         else:
             raise ValueError(f'Unable to invert Filter "{self.query}"')
 
     def __and__(self, other):
         if isinstance(other, Filter):
-            return Filter(f'({self.query}) AND ({other.query})')
+            return Filter(f"({self.query}) AND ({other.query})")
         elif isinstance(other, Column):
-            if other.dtype == 'checkbox':
-                return Filter(f'({self.query}) AND {other.name}')
-            raise TypeError('Unable to combine Filter and column of type '
-                            f'"{other}.dtype"')
+            if other.dtype == "checkbox":
+                return Filter(f"({self.query}) AND {other.name}")
+            raise TypeError(
+                f'Unable to combine Filter and column of type "{other}.dtype"'
+            )
 
         raise TypeError(f'Unable to combine Filter and "{type(other)}"')
 
     def __or__(self, other):
         if isinstance(other, Filter):
-            return Filter(f'({self.query}) OR ({other.query})')
+            return Filter(f"({self.query}) OR ({other.query})")
         elif isinstance(other, Column):
-            if other.dtype == 'checkbox':
-                return Filter(f'({self.query}) OR ({other.name})')
+            if other.dtype == "checkbox":
+                return Filter(f"({self.query}) OR ({other.name})")
 
         raise TypeError(f'Unable to combine Filter and "{type(other)}"')
 
@@ -2106,17 +2281,17 @@ class LocIndexer:
         limit = None
         if type(key) is tuple:
             if len(key) == 1:
-                where, cols = key, '*'
+                where, cols = key, "*"
             elif len(key) == 2:
                 where, cols = key
             elif len(key) == 3:
                 where, cols, limit = key
             elif len(key) > 3:
-                raise IndexError(f'Too many indexers ({len(key)})')
+                raise IndexError(f"Too many indexers ({len(key)})")
             else:
                 raise IndexError(f'Unable to use indexer "{key}"')
         else:
-            where, cols = key, '*'
+            where, cols = key, "*"
 
         if isinstance(where, pd.Series):
             where = where.values
@@ -2128,12 +2303,14 @@ class LocIndexer:
             query = create_query(self.table, columns=cols, where=where, limit=limit)
 
         records = self.table.query(query, no_limit=True)
-        data = process_records(records,
-                               row_id_index=isinstance(cols, str) and cols != '_id',
-                               dtypes=self.table.dtypes.to_dict() if self.table.sanitize else None)
+        data = process_records(
+            records,
+            row_id_index=isinstance(cols, str) and cols != "_id",
+            dtypes=self.table.dtypes.to_dict() if self.table.sanitize else None,
+        )
 
         # Reindex columns so that we have columns even if data is empty
-        if cols != '*':
+        if cols != "*":
             data = data.reindex(make_iterable(cols), axis=1)
         else:
             # This sorts columns like in the UI
@@ -2148,7 +2325,7 @@ class LocIndexer:
             data = data.iloc[0]
 
         # If a single column was requested
-        if isinstance(cols, str) and cols != '*':
+        if isinstance(cols, str) and cols != "*":
             data = data[cols]
 
         return data
@@ -2160,22 +2337,27 @@ class LocIndexer:
             if isinstance(values, pd.DataFrame):
                 for col in values.columns:
                     if col not in self.table.columns:
-                        logger.warning(f'Skipping column "{col}": '
-                                       'not present in table.')
+                        logger.warning(
+                            f'Skipping column "{col}": not present in table.'
+                        )
                     self[key, col] = values[col]
                 return
             else:
-                raise KeyError('Must provide DataFrame when writing to table '
-                               'using the .loc Indexer without specifying the '
-                               'column.')
+                raise KeyError(
+                    "Must provide DataFrame when writing to table "
+                    "using the .loc Indexer without specifying the "
+                    "column."
+                )
         elif len(key) != 2:
-            raise IndexError(f'Wrong number of indexers ({len(key)})')
+            raise IndexError(f"Wrong number of indexers ({len(key)})")
 
         where, col = key
 
         if col not in self.table.columns:
-            raise KeyError('Column {col} must exists, use `add_column()` method to '
-                           f'create "{col}" before setting its values')
+            raise KeyError(
+                "Column {col} must exists, use `add_column()` method to "
+                f'create "{col}" before setting its values'
+            )
 
         if isinstance(where, pd.Series):
             where = where.values
@@ -2193,10 +2375,11 @@ class LocIndexer:
                 if all(is_id):
                     row_ids = where
                 else:
-                    raise KeyError('Can only index by boolean iterable or '
-                                   'iterable of row IDs.')
+                    raise KeyError(
+                        "Can only index by boolean iterable or iterable of row IDs."
+                    )
         else:
-            row_ids = self[where, '_id'].values
+            row_ids = self[where, "_id"].values
 
         if isinstance(values, (pd.Series, Column)):
             values = values.values
@@ -2204,8 +2387,10 @@ class LocIndexer:
         if not is_iterable(values):
             values = [values] * len(self.table)
         elif len(values) != len(row_ids):
-            raise ValueError(f'Length of values ({len(values)}) does not '
-                             f'match length of rows ({len(row_ids)})')
+            raise ValueError(
+                f"Length of values ({len(values)}) does not "
+                f"match length of rows ({len(row_ids)})"
+            )
 
         # Validate datatype
         validate_dtype(self.table, col, values)
@@ -2213,17 +2398,20 @@ class LocIndexer:
         # This checks for potential int64 -> int32 issues
         values = validate_values(values, col=self.table[col])
 
-        records = [{'row_id': r,
-                    'row': {col: v if not pd.isnull(v) else None}} for r, v in zip(row_ids, values)]
+        records = [
+            {"row_id": r, "row": {col: v if not pd.isnull(v) else None}}
+            for r, v in zip(row_ids, values)
+        ]
 
         if not self.table._hold:
-            r = batch_upload(partial(self.table.base.batch_update_rows,
-                                     self.table.name),
-                             records,
-                             batch_size=self.table.max_operations,
-                             progress=self.table.progress)
+            r = batch_upload(
+                partial(self.table.base.batch_update_rows, self.table.name),
+                records,
+                batch_size=self.table.max_operations,
+                progress=self.table.progress,
+            )
 
-            if 'success' in r:
+            if "success" in r:
                 logger.info(f'Successfully wrote to "{col}"!')
         else:
             self.table._queue += records
@@ -2238,16 +2426,17 @@ class iLocIndexer:
             start, stop, step = self.parse_slice(key)
 
             if step:
-                warnings.warn(f'Step {step} is applied only after the data has '
-                              'been downloaded.')
+                warnings.warn(
+                    f"Step {step} is applied only after the data has been downloaded."
+                )
 
             # Construct the query
             if start and stop:
-                q = f'SELECT * FROM {self.table.name} LIMIT {start}, {stop}'
+                q = f"SELECT * FROM {self.table.name} LIMIT {start}, {stop}"
             elif start:
-                q = f'SELECT * FROM {self.table.name} LIMIT {start}, {self.table.shape[0] - start}'
+                q = f"SELECT * FROM {self.table.name} LIMIT {start}, {self.table.shape[0] - start}"
             else:
-                q = f'SELECT * FROM {self.table.name} LIMIT {stop}'
+                q = f"SELECT * FROM {self.table.name} LIMIT {stop}"
 
             data = self.table.query(q)
 
@@ -2277,33 +2466,34 @@ class iLocIndexer:
 def create_query(table, columns=None, where=None, limit=None):
     """Create SQL query."""
     if isinstance(where, slice) and not isinstance(limit, type(None)):
-        raise TypeError('Unable to construct WHERE query with limit and slice '
-                        'as index')
+        raise TypeError("Unable to construct WHERE query with limit and slice as index")
 
-    if not isinstance(columns, type(None)) and columns != '*':
+    if not isinstance(columns, type(None)) and columns != "*":
         columns = make_iterable(columns).astype(str)
-        if len(columns) == 1:
-            q = f'SELECT {columns[0]}'
-        else:
-            q = f'SELECT {", ".join(columns)}'
+        q = "SELECT "
+        for col in columns:
+            q += f"`{col}`, "
+        q = q[:-2]  # Remove last comma
     else:
-        q = ' SELECT *'
+        q = " SELECT *"
 
-    q += f' FROM {table.name}'
+    q += f" FROM {table.name}"
 
     if not isinstance(where, type(None)):
         if isinstance(where, Filter):
-            q += f' WHERE {where.query}'
+            q += f" WHERE {where.query}"
         elif isinstance(where, Column):
-            if not where.dtype == 'checkbox':
-                raise TypeError('Can only query by columns with dtype '
-                                f'"checkbox", got "{where.dtype}"')
-            q += f' WHERE {where.name} = True'
+            if not where.dtype == "checkbox":
+                raise TypeError(
+                    "Can only query by columns with dtype "
+                    f'"checkbox", got "{where.dtype}"'
+                )
+            q += f" WHERE {where.name} = True"
         elif isinstance(where, slice):
             if slice.start == slice.stop:
-                raise KeyError('Slice start and stop must not be the same')
+                raise KeyError("Slice start and stop must not be the same")
             elif where.step:
-                raise KeyError('Unable to use slice with step for indexing')
+                raise KeyError("Unable to use slice with step for indexing")
 
             if where.start and where.start < 0:
                 start = table.shape[0] + where.start
@@ -2316,54 +2506,60 @@ def create_query(table, columns=None, where=None, limit=None):
                 stop = where.stop
 
             if start and stop:
-                q += f' LIMIT {start}, {stop-start}'
+                q += f" LIMIT {start}, {stop - start}"
             elif start:
-                q += f' LIMIT {start}, {table.shape[0] - start}'
+                q += f" LIMIT {start}, {table.shape[0] - start}"
             elif stop:
-                q += f' LIMIT {stop}'
+                q += f" LIMIT {stop}"
         elif isinstance(where, int):
-            q += f' LIMIT {where}, 1'
+            q += f" LIMIT {where}, 1"
         elif isinstance(where, str):
             if where not in table.row_ids:
                 ValueError(f'"{where}" does not appear to be a valid row id')
             q += f" WHERE _id = '{where}'"
         elif is_iterable(where):
             if not all(np.isin(where, table.row_ids)):
-                raise ValueError('Expected iterable to be a list of valid row IDs.')
+                raise ValueError("Expected iterable to be a list of valid row IDs.")
             q_str = '("' + '", "'.join(where) + '")'
             q += f" WHERE _id IN {q_str}"
         else:
             raise TypeError(f'Unable to construct WHERE query from "{type(where)}"')
 
     if isinstance(limit, numbers.Number):
-        q += f' LIMIT {limit}'
+        q += f" LIMIT {limit}"
 
     return q
 
 
-def batch_upload(func, records, batch_size=1000, desc='Writing',
-                 omit_errors=False, batch_param='rows_data', progress=True):
+def batch_upload(
+    func,
+    records,
+    batch_size=1000,
+    desc="Writing",
+    omit_errors=False,
+    batch_param="rows_data",
+    progress=True,
+):
     """Upload/update rows in batches of defined size."""
     no_errors = True
-    with tqdm(desc=desc,
-              total=len(records),
-              disable=len(records) < batch_size or not progress) as pbar:
-
+    with tqdm(
+        desc=desc, total=len(records), disable=len(records) < batch_size or not progress
+    ) as pbar:
         for i in range(0, len(records), batch_size):
-            batch = records[i: i + batch_size]
+            batch = records[i : i + batch_size]
 
             r = func(**{batch_param: batch})
 
             # Catching error messages for the different functions is a bit hit and
             # miss without a documented schema
-            if r.get('success', False):
+            if r.get("success", False):
                 continue
-            if 'inserted_row_count' in r:
+            if "inserted_row_count" in r:
                 continue
-            if 'deleted_rows' in r:
+            if "deleted_rows" in r:
                 continue
 
-            msg = f'Error editing table (batch {int(i / batch_size)}/{len(records) // batch_size + 1}): {r}'
+            msg = f"Error editing table (batch {int(i / batch_size)}/{len(records) // batch_size + 1}): {r}"
             if not omit_errors:
                 raise ValueError(msg)
             else:
@@ -2373,7 +2569,7 @@ def batch_upload(func, records, batch_size=1000, desc='Writing',
             pbar.update(len(batch))
             pbar.refresh()  # for some reason this is necessary
 
-    return {'success'} if no_errors else {'errors'}
+    return {"success"} if no_errors else {"errors"}
 
 
 class BundleEdits:
@@ -2384,9 +2580,10 @@ class BundleEdits:
 
     Currently this only works for updating rows.
     """
+
     def __init__(self, table):
         if not isinstance(table, Table):
-            raise TypeError(f'Expected `seaserpent.Table`, got {type(table)}')
+            raise TypeError(f"Expected `seaserpent.Table`, got {type(table)}")
         self.table = table
         self.nested = False
 
