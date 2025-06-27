@@ -65,6 +65,39 @@ def map_columntype(x):
     raise ValueError(f'Unknown column type "{x}". Try one of the following:\n {type_str}')
 
 
+def map_columntype_inv(col_meta):
+    """Map SeaTable column type to Pandas data type."""
+    dtype = col_meta["type"]
+    if dtype == "checkbox":
+        return bool
+    elif dtype in ("number",):
+        # If precision is greater than 0, use float64
+        if col_meta.get("data", {}).get("precision", 0) > 0:
+            return np.float64
+        # Use pandas' Int64 type for integers because it can handle NaNs
+        return pd.Int64Dtype()
+    elif dtype in ("rate",):
+        # Rate ("Rating") is a integer between 0 and 5
+        return pd.UInt8Dtype()
+    elif dtype in ("autonumber",):
+        # AUTONUMBER can be a consecutive integer or a string + integer (e.g. "ID-1") or a date + number (e.g. "20231001-1")
+        try:
+            _ = int(col_meta["data"]["format"])
+            return pd.Int64Dtype()
+        except ValueError:
+            # If we can't convert to int, assume it's a string
+            return pd.StringDtype()
+    elif dtype in ("single-select",):
+        return pd.CategoricalDtype()
+    elif dtype in ("date", "mtime", "ctime"):
+        return pd.DatetimeTZDtype(tz="UTC")
+    elif dtype in ("duration",):
+        # Duration is an integer representing duration in seconds
+        return "timedelta64[s]"
+    # All other types are treated as (nullable) strings
+    return pd.StringDtype()
+
+
 def process_records(records, columns=None, row_id_index=True, dtypes=None):
     """Turn records into pandas DataFrame.
 
@@ -79,8 +112,8 @@ def process_records(records, columns=None, row_id_index=True, dtypes=None):
                     Whether to use row IDs as index (if present). If False,
                     will keep as `_row_id` column.
     dtypes :        dict, optional
-                    Optional SeaTable data types as strings. If provides, will
-                    perform some clean-up operations.
+                    Optional pandas dtypes. If provided, will try to convert
+                    data and run some clean-up operations.
 
     Returns
     -------
@@ -104,36 +137,28 @@ def process_records(records, columns=None, row_id_index=True, dtypes=None):
     if not isinstance(columns, type(None)):
         df = df[[c for c in columns if c in df.columns]]
 
-    # Try some clean-up operations
+    # Data conversion & clean-up operations
     if isinstance(dtypes, dict):
         for c, dt in dtypes.items():
             # Skip non-existing columns
             if c not in df:
                 continue
 
-            if dt == 'checkbox':
-                df[c] = df[c].astype(bool, copy=False, errors='ignore')
-            elif dt == 'number':
-                # Manually cleared cells will unfortunately return an empty
-                # str ('') as value instead of just no value at all...
-                if df[c].dtype == 'O':
-                    # Set empty strings to None
-                    df.loc[df[c] == '', c] = None
-                    # Try to convert to float
-                    df[c] = df[c].astype(float, copy=False, errors='ignore')
-            elif dt == 'date':
-                df[c] = pd.to_datetime(df[c])
-            elif dt in ('text', 'long text', 'url'):
-                # Manually cleared cells will return an empty
-                # str ('') as value instead of just no value at all...
-                df.loc[df[c] == '', c] = None
-                df.loc[df[c] == 'None', c] = None
+            # Annoyingly, manually cleared cells will return an empty
+            # str ('') as value instead of just no value at all...
+            # Here we set empty strings to None
+            df.loc[df[c] == '', c] = None
 
+            # For categorical types we will convert to string type first
+            if dt == pd.CategoricalDtype():
                 # Use pandas own string type
-                df[c] = df[c].astype('string')
-            elif dt == 'single-select':
-                df[c] = df[c].astype('string').astype('category')
-
+                df[c] = df[c].astype('string[python]').astype('category')
+            else:
+                # Important: converesion to pandas own integer types (e.g. Int64Dtype)
+                # will fail to coerce floats if the floats are not whole numbers.
+                # Because we're using `errors='ignore'` this will not raise an error
+                # but will just keep the floats as is.
+                df[c] = df[c].astype(dt, copy=False, errors='ignore')
 
     return df
 
@@ -662,7 +687,7 @@ def is_equal_array(a, b):
     # Turn categoricals into string arrays because otherwise elementwise
     # comparison will fail
     if isinstance(a, pd.core.arrays.categorical.Categorical):
-        a = a.astype('string')
+        a = a.astype('string[python]')
 
     if not isinstance(a, (np.ndarray, pd.Series, pd.core.arrays.StringArray)):
         raise TypeError(f'Expected array or Series, got "{type(a)}"')

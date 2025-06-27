@@ -24,6 +24,7 @@ from .utils import (
     make_iterable,
     is_hashable,
     map_columntype,
+    map_columntype_inv,
     find_base,
     write_access,
     validate_dtype,
@@ -207,7 +208,7 @@ class Table:
         return process_records(
             records,
             columns=columns,
-            dtypes=self.dtypes.to_dict() if self.sanitize else None,
+            dtypes=self.pandas_dtypes.to_dict() if self.sanitize else None,
         )
 
     @write_access
@@ -313,8 +314,16 @@ class Table:
 
     @property
     def dtypes(self):
-        """Column data types."""
+        """Column SeaTable data types."""
         return pd.Series([c["type"] for c in self.meta["columns"]], index=self.columns)
+
+    @property
+    def pandas_dtypes(self):
+        """Inferred column Pandas data types."""
+        return pd.Series(
+            [map_columntype_inv(c) for c in self.meta["columns"]],
+            index=self.columns,
+        )
 
     @property
     def id(self):
@@ -1490,7 +1499,7 @@ class Table:
         return process_records(
             data,
             columns=self.columns,
-            dtypes=self.dtypes.to_dict() if self.sanitize else None,
+            dtypes=self.pandas_dtypes.to_dict() if self.sanitize else None,
         )
 
     @write_access
@@ -1624,7 +1633,7 @@ class Table:
             data,
             columns=self.columns,
             row_id_index=row_id_index,
-            dtypes=self.dtypes.to_dict() if self.sanitize else None,
+            dtypes=self.pandas_dtypes.to_dict() if self.sanitize else None,
         )
 
     @check_token
@@ -1770,6 +1779,10 @@ class Column:
         return self.meta["type"]
 
     @property
+    def pandas_dtype(self):
+        return map_columntype_inv(self.meta)
+
+    @property
     def meta(self):
         """Meta data for this column."""
         if self.name == "_id":
@@ -1846,7 +1859,7 @@ class Column:
         return process_records(
             rows,
             row_id_index=self.name != "_id",
-            dtypes={self.name: self.dtype} if self.table.sanitize else None,
+            dtypes={self.name: self.pandas_dtype} if self.table.sanitize else None,
         ).iloc[:, 0]
 
     @write_access
@@ -2117,7 +2130,10 @@ class Column:
         rows = self.table.query(f"SELECT DISTINCT `{self.name}`", no_limit=True)
 
         return (
-            process_records(rows, dtypes=self.dtype if self.table.sanitize else None)
+            process_records(
+                rows,
+                dtypes={self.name: self.pandas_dtype} if self.table.sanitize else None,
+            )
             .iloc[:, 0]
             .values
         )
@@ -2306,7 +2322,7 @@ class LocIndexer:
         data = process_records(
             records,
             row_id_index=isinstance(cols, str) and cols != "_id",
-            dtypes=self.table.dtypes.to_dict() if self.table.sanitize else None,
+            dtypes=self.table.pandas_dtypes.to_dict() if self.table.sanitize else None,
         )
 
         # Reindex columns so that we have columns even if data is empty
@@ -2444,7 +2460,13 @@ class iLocIndexer:
             if step:
                 data = data[::step]
 
-            return process_records(data, columns=self.table.columns)
+            return process_records(
+                data,
+                columns=self.table.columns,
+                dtypes=self.table.pandas_dtypes.to_dict()
+                if self.table.sanitize
+                else None,
+            )
 
     def parse_slice(self, s):
         if s.start and s.start < 0:
