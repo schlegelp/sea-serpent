@@ -72,8 +72,10 @@ def map_columntype_inv(col_meta):
         return bool
     elif dtype in ("number",):
         # If precision is greater than 0, use float64
-        if col_meta.get("data", {}).get("precision", 0) > 0:
-            return np.float64
+        # N.b. that `data` can be `None`
+        if isinstance(col_meta.get('data', None), dict):
+            if col_meta['data'].get("precision", 0) > 0:
+                return np.float64
         # Use pandas' Int64 type for integers because it can handle NaNs
         return pd.Int64Dtype()
     elif dtype in ("rate",):
