@@ -211,7 +211,7 @@ def is_hashable(x):
 
 def is_iterable(x):
     """Return True if `x` is iterable (container)."""
-    if isinstance(x, (list, np.ndarray, set, tuple)):
+    if isinstance(x, (list, np.ndarray, set, tuple, pd.core.arrays.ExtensionArray)):
         return True
     return False
 
@@ -439,18 +439,16 @@ def validate_dtype(table, column, values):
         values = values.values
 
     # Some shortcuts if `values` is an array
-    if isinstance(values, np.ndarray):
+    if isinstance(values, (np.ndarray, pd.core.arrays.ExtensionArray)):
         # Shortcut for dates
-        if dtype == 'date' and values.dtype.type == np.datetime64:
+        if dtype == "date" and values.dtype.type == np.datetime64:
             return
-        elif dtype in ('number', ) and values.dtype.type in NUMERIC_TYPES:
+        elif dtype in ("number",) and values.dtype.type in NUMERIC_TYPES:
             return
-        elif dtype in ('text',
-                       'long text',
-                       'single-select'):
-            if values.dtype.kind == 'U':
+        elif dtype in ("text", "long text", "single-select"):
+            if values.dtype.kind == "U":
                 return
-            if values.dtype == 'string[python]':
+            if values.dtype == "string[python]":
                 return
 
     # If list or unknown datatype, bite the bullet and check every value
