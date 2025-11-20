@@ -81,7 +81,7 @@ def map_columntype_inv(col_meta):
     elif dtype in ("rate",):
         # Rate ("Rating") is a integer between 0 and 5
         return pd.UInt8Dtype()
-    elif dtype in ("autonumber",):
+    elif dtype in ("autonumber", "auto-number", ):
         # AUTONUMBER can be a consecutive integer or a string + integer (e.g. "ID-1") or a date + number (e.g. "20231001-1")
         try:
             _ = int(col_meta["data"]["format"])
@@ -97,6 +97,7 @@ def map_columntype_inv(col_meta):
         # Duration is an integer representing duration in seconds
         return "timedelta64[s]"
     # All other types are treated as (nullable) strings
+    # (this includes multiple-select)
     return pd.StringDtype()
 
 
