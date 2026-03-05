@@ -1197,11 +1197,19 @@ class Table:
         if isinstance(max_time, dt.date):
             max_time = dt.datetime(max_time.year, max_time.month, max_time.day)
 
-        # Convert datetime to timestamp
+        # Convert datetime to time-zone aware timestamp
+        if isinstance(max_time, dt.date):
+            max_time = dt.datetime(max_time.year, max_time.month, max_time.day)
+
         if isinstance(max_time, dt.datetime):
-            total = (dt.datetime.now() - max_time).days
-            max_time = int(dt.datetime.timestamp(max_time) * 1e3)
-            now = int(dt.datetime.timestamp(dt.datetime.now()) * 1e3)
+            # Make sure the datetime object is timezone-aware (SeaTable returns timezone-aware timestamps)
+            if max_time.tzinfo is None:
+                max_time = max_time.replace(tzinfo=dt.timezone.utc)
+
+            now = dt.datetime.now(tz=dt.timezone.utc)
+            total = (now - max_time).days  # number of days (for progress bar)
+            if max_time > now:
+                raise ValueError("Time travel only works backwards, not into the future!")
             max_entries = None
         elif max_entries:
             total = max_entries
@@ -1238,12 +1246,12 @@ class Table:
                     # Create DataFrame
                     logs.append(pd.DataFrame.from_records(data))
 
-                    # Parse op dictionary
-                    logs[-1]["activities"] = logs[-1].operation.map(json.loads)
+                    if "op_time" in logs[-1].columns:
+                        logs[-1]['op_time'] = pd.to_datetime(logs[-1]['op_time'])
 
                     # Drop irrelevant entries
-                    table = logs[-1].operation.map(lambda x: x.get("table_id", None))
-                    logs[-1] = logs[-1][table == self.id]
+                    table = logs[-1].detail.map(lambda x: x.get("table_id", None))
+                    logs[-1] = logs[-1][(table == self.id) | (table.isnull())]
 
                     entries += logs[-1].shape[0]
 
@@ -1254,100 +1262,18 @@ class Table:
 
                     if max_time:
                         # Get the days we went back
-                        days = (now - logs[-1].op_time.values[-1]) / 1e3 / 86_400
+                        days = (now - logs[-1].op_time.min()).days
                         diff = int(days - pbar.n)
                         if diff:
                             pbar.update(diff)
-                        if logs[-1].op_time.values[-1] <= max_time:
+                        if logs[-1].op_time.min() < max_time:
+                            logs[-1] = logs[-1][logs[-1].op_time >= max_time]
                             break
 
                     page += 1
 
-        return logs
-
-        # Combine
-        logs = pd.concat(logs, axis=0)
-
-        if max_time:
-            logs = logs[logs.op_time >= max_time]
-        elif max_entries:
-            logs = logs.iloc[:max_entries].copy()
-
-        # Some clean-up:
-        # Extract/parse relevant values
-        logs["op_time"] = (logs.op_time / 1e3).map(dt.datetime.fromtimestamp)
-        logs["op_type"] = logs.operation.map(lambda x: x["op_type"]).astype("category")
-
-        users = self.collaborators.set_index("email").name.to_dict()
-        logs.insert(0, "user", logs.author.map(users))
-        logs["user"] = logs["user"].astype("category")
-        logs.drop("author", inplace=True, axis=1)
-
-        logs["rows_modified"] = logs.operation.map(lambda x: len(x.get("row_ids", [])))
-        logs.loc[logs.op_type == "modify_row", "rows_modified"] = 1
-
-        col = logs.pop("operation")
-        logs["details"] = col
-
-        def clean_details(x):
-            """Run some clean up on the details column."""
-            # Pop some values we don't need (anymore)
-            _ = x.pop("table_id", "")
-            _ = x.pop("op_type", "")
-
-            return x
-
-        logs["details"] = logs.details.map(clean_details)
-
-        logs = logs.reset_index(drop=True)
-
-        if unpack:
-            unpacked = []
-            for row in logs[
-                logs.op_type.isin(["modify_rows", "modify_row"])
-            ].itertuples():
-                user = row.user
-                app = row.app
-                op_time = row.op_time
-                op_id = row.op_id
-                details = row.details
-
-                # If single row turn it into a fake multi row edit
-                if row.op_type == "modify_row":
-                    row_id = details["row_id"]
-                    details["row_ids"] = [row_id]
-                    details["updated"] = {row_id: details["updated"]}
-                    details["old_rows"] = {row_id: details["old_row"]}
-
-                for id in details["row_ids"]:
-                    for col, new_value in details["updated"][id].items():
-                        # Skip internal columns like '_last_modifier'
-                        if col.startswith("_"):
-                            continue
-                        old_value = details["old_rows"][id].get(col, None)
-                        unpacked.append(
-                            [user, app, op_time, op_id, id, col, old_value, new_value]
-                        )
-
-            logs = pd.DataFrame(
-                unpacked,
-                columns=[
-                    "user",
-                    "app",
-                    "op_time",
-                    "op_id",
-                    "row_id",
-                    "column",
-                    "old_value",
-                    "new_value",
-                ],
-            )
-
-            logs["column"] = self._col_ids_to_names(logs.column.values)
-            for c in ["user", "app", "column"]:
-                logs[c] = logs[c].astype("category")
-
-        return logs
+        # Combine and return
+        return pd.concat(logs, axis=0)
 
     @check_token
     def fetch_meta(self):
