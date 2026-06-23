@@ -1,7 +1,6 @@
 import functools
 import numbers
 import os
-import requests
 import sys
 import logging
 
@@ -9,42 +8,62 @@ import datetime as dt
 import numpy as np
 import pandas as pd
 
-#from seatable_api import Account
-from .patch import Account
+from .auth import get_account, resolve_auth_token
+
 from seatable_api.constants import ColumnTypes
 
 
 logger = logging.getLogger(__name__)
-logger.setLevel('INFO')
+logger.setLevel("INFO")
 
 COLUMN_TYPES = {
-    (int, float, 'i', 'u', 'int', 'f', 'float', 'number'): ColumnTypes.NUMBER,  # number
-    (str, 'S', 'str', 'text'): ColumnTypes.TEXT,                                # text
-    ('long text', ): ColumnTypes.LONG_TEXT,                                     # long text
-    (bool, 'b', 'bool', 'checkbox'): ColumnTypes.CHECKBOX,                      # checkbox
-    ('date', 'M'): ColumnTypes.DATE,                                               # date & time
-    ('select', 'single_select',
-     pd.CategoricalDtype): ColumnTypes.SINGLE_SELECT,                           # single select
-    ('multiple_select', ): ColumnTypes.MULTIPLE_SELECT,                         # multiple select
-    ('image', ): ColumnTypes.IMAGE,                                             # image
-    ('file', ): ColumnTypes.FILE,                                               # file
-    ('collaborator', ): ColumnTypes.COLLABORATOR,                               # collaborator
-    ('link', ): ColumnTypes.LINK,                                               # link to other records
-    ('link-formula', ): ColumnTypes.LINK_FORMULA,                               # pull values from other table via link
-    ('formula', ): ColumnTypes.FORMULA,                                         # formula
-    ('creator', ): ColumnTypes.CREATOR,                                         # creator
-    ('ctime', ): ColumnTypes.CTIME,                                             # create time
-    ('last_modifier', ): ColumnTypes.LAST_MODIFIER,                             # last modifier
-    ('mtime', ): ColumnTypes.MTIME,                                             # modify time
-    ('location', 'geolocation'): ColumnTypes.GEOLOCATION,                       # geolocation
-    ('auto_number', ): ColumnTypes.AUTO_NUMBER,                                 # auto munber
-    ('url', ): ColumnTypes.URL,                                                 # URL
+    (int, float, "i", "u", "int", "f", "float", "number"): ColumnTypes.NUMBER,  # number
+    (str, "S", "str", "text"): ColumnTypes.TEXT,  # text
+    ("long text",): ColumnTypes.LONG_TEXT,  # long text
+    (bool, "b", "bool", "checkbox"): ColumnTypes.CHECKBOX,  # checkbox
+    ("date", "M"): ColumnTypes.DATE,  # date & time
+    (
+        "select",
+        "single_select",
+        pd.CategoricalDtype,
+    ): ColumnTypes.SINGLE_SELECT,  # single select
+    ("multiple_select",): ColumnTypes.MULTIPLE_SELECT,  # multiple select
+    ("image",): ColumnTypes.IMAGE,  # image
+    ("file",): ColumnTypes.FILE,  # file
+    ("collaborator",): ColumnTypes.COLLABORATOR,  # collaborator
+    ("link",): ColumnTypes.LINK,  # link to other records
+    (
+        "link-formula",
+    ): ColumnTypes.LINK_FORMULA,  # pull values from other table via link
+    ("formula",): ColumnTypes.FORMULA,  # formula
+    ("creator",): ColumnTypes.CREATOR,  # creator
+    ("ctime",): ColumnTypes.CTIME,  # create time
+    ("last_modifier",): ColumnTypes.LAST_MODIFIER,  # last modifier
+    ("mtime",): ColumnTypes.MTIME,  # modify time
+    ("location", "geolocation"): ColumnTypes.GEOLOCATION,  # geolocation
+    ("auto_number",): ColumnTypes.AUTO_NUMBER,  # auto munber
+    ("url",): ColumnTypes.URL,  # URL
 }
 
-NUMERIC_TYPES = [numbers.Number, int, float,
-                 np.int8, np.int16, np.int32, np.int64, np.integer,
-                 np.uint, np.uint8, np.uint16, np.uint32, np.uint64,
-                 np.float16, np.float32, np.float64, np.floating]
+NUMERIC_TYPES = [
+    numbers.Number,
+    int,
+    float,
+    np.int8,
+    np.int16,
+    np.int32,
+    np.int64,
+    np.integer,
+    np.uint,
+    np.uint8,
+    np.uint16,
+    np.uint32,
+    np.uint64,
+    np.float16,
+    np.float32,
+    np.float64,
+    np.floating,
+]
 
 # These aren't available for all systems / numpy versions
 for ty in ("int0", "np.uint0", "float128"):
@@ -60,9 +79,14 @@ def map_columntype(x):
         if x in k:
             return v
 
-    type_str = [f'{" or ".join([str(i) for i in k])} = {str(v).split(".")[-1]}' for k, v in COLUMN_TYPES.items()]
+    type_str = [
+        f"{' or '.join([str(i) for i in k])} = {str(v).split('.')[-1]}"
+        for k, v in COLUMN_TYPES.items()
+    ]
     type_str = "\n".join(type_str)
-    raise ValueError(f'Unknown column type "{x}". Try one of the following:\n {type_str}')
+    raise ValueError(
+        f'Unknown column type "{x}". Try one of the following:\n {type_str}'
+    )
 
 
 def map_columntype_inv(col_meta):
@@ -73,15 +97,18 @@ def map_columntype_inv(col_meta):
     elif dtype in ("number",):
         # If precision is greater than 0, use float64
         # N.b. that `data` can be `None`
-        if isinstance(col_meta.get('data', None), dict):
-            if col_meta['data'].get("precision", 0) > 0:
+        if isinstance(col_meta.get("data", None), dict):
+            if col_meta["data"].get("precision", 0) > 0:
                 return np.float64
         # Use pandas' Int64 type for integers because it can handle NaNs
         return pd.Int64Dtype()
     elif dtype in ("rate",):
         # Rate ("Rating") is a integer between 0 and 5
         return pd.UInt8Dtype()
-    elif dtype in ("autonumber", "auto-number", ):
+    elif dtype in (
+        "autonumber",
+        "auto-number",
+    ):
         # AUTONUMBER can be a consecutive integer or a string + integer (e.g. "ID-1") or a date + number (e.g. "20231001-1")
         try:
             _ = int(col_meta["data"]["format"])
@@ -127,15 +154,15 @@ def process_records(records, columns=None, row_id_index=True, dtypes=None):
 
     if not isinstance(columns, type(None)):
         # If row ID is requested as index, make sure it's among columns
-        if row_id_index and '_id' not in columns and '_id' in records[0]:
-            columns = list(columns) + ['_id']
+        if row_id_index and "_id" not in columns and "_id" in records[0]:
+            columns = list(columns) + ["_id"]
         records = [{c: r.get(c, None) for c in columns} for r in records]
 
     df = pd.DataFrame.from_records(records)
 
-    if row_id_index and '_id' in df.columns:
-        df.set_index('_id', drop=True, inplace=True)
-        df.index.name = 'row_id'
+    if row_id_index and "_id" in df.columns:
+        df.set_index("_id", drop=True, inplace=True)
+        df.index.name = "row_id"
 
     if not isinstance(columns, type(None)):
         df = df[[c for c in columns if c in df.columns]]
@@ -150,53 +177,22 @@ def process_records(records, columns=None, row_id_index=True, dtypes=None):
             # Annoyingly, manually cleared cells will return an empty
             # str ('') as value instead of just no value at all...
             # Here we set empty strings to None
-            is_empty = df[c] == ''
+            is_empty = df[c] == ""
             if is_empty.any():
                 df.loc[is_empty, c] = None
 
             # For categorical types we will convert to string type first
             if dt == pd.CategoricalDtype():
                 # Use pandas own string type
-                df[c] = df[c].astype('string[python]').astype('category')
+                df[c] = df[c].astype("string[python]").astype("category")
             else:
                 # Important: converesion to pandas own integer types (e.g. Int64Dtype)
                 # will fail to coerce floats if the floats are not whole numbers.
                 # Because we're using `errors='ignore'` this will not raise an error
                 # but will just keep the floats as is.
-                df[c] = df[c].astype(dt, copy=False, errors='ignore')
+                df[c] = df[c].astype(dt, copy=False, errors="ignore")
 
     return df
-
-
-def get_auth_token(username, password, server='https://cloud.seatable.io'):
-    """Retrieve your auth token.
-
-    Parameters
-    ----------
-    username :  str
-                Login name or email address.
-    password :  str
-                Your password.
-    server :    str
-                URL to your seacloud server.
-
-    Returns
-    -------
-    dict
-                Dictionary {'token': 'YOURTOKEN'}
-
-    """
-    while server.endswith('/'):
-        server = server[:-1]
-
-    url = f'{server}/api2/auth-token/'
-    post = {'username': username, 'password': password}
-
-    r = requests.post(url, data=post)
-
-    r.raise_for_status()
-
-    return r.json()
 
 
 def is_hashable(x):
@@ -227,13 +223,13 @@ def make_iterable(x):
 def validate_comparison(column, other, allow_iterable=False):
     """Raise TypeError if comparison not allowed."""
     if not is_iterable(other):
-        if column.dtype in ('text', 'long-text'):
+        if column.dtype in ("text", "long-text"):
             if isinstance(other, str):
                 return True
-        elif column.dtype == 'number':
+        elif column.dtype == "number":
             if isinstance(other, numbers.Number):
                 return True
-        elif column.dtype == 'checkbox':
+        elif column.dtype == "checkbox":
             if isinstance(other, bool):
                 return True
         else:
@@ -244,45 +240,9 @@ def validate_comparison(column, other, allow_iterable=False):
         return [validate_comparison(column, o, allow_iterable=False) for o in other]
 
     # If we haven't returned yet, throw hissy fit
-    raise TypeError(f'Unable to compare column of type "{column.dtype}" with "{type(other)}"')
-
-
-def get_account(auth_token=None, server=None):
-    """Initialize SeaTable Account.
-
-    Parameters
-    ----------
-    auth_token :        str, optional
-                        Your user's auth token (not the base token). Can either
-                        provided explicitly or be set as ``SEATABLE_TOKEN``
-                        environment variable.
-    server :            str, optional
-                        Must be provided explicitly or set as ``SEATABLE_SERVER``
-                        environment variable.
-
-    Returns
-    -------
-    Account
-
-    """
-    if not server:
-        server = os.environ.get('SEATABLE_SERVER')
-
-    if not auth_token:
-        auth_token = os.environ.get('SEATABLE_TOKEN')
-
-    if not server:
-        raise ValueError('Must provide `server` or set `SEATABLE_SERVER` '
-                         'environment variable')
-    if not auth_token:
-        raise ValueError('Must provide either `auth_token` or '
-                         'set `SEATABLE_TOKEN` environment variable')
-
-    # Initialize Account
-    account = Account(None, None, server)
-    account.token = auth_token
-
-    return account
+    raise TypeError(
+        f'Unable to compare column of type "{column.dtype}" with "{type(other)}"'
+    )
 
 
 def find_base(base=None, required_table=None, auth_token=None, server=None):
@@ -297,8 +257,8 @@ def find_base(base=None, required_table=None, auth_token=None, server=None):
                         Name of a table that is required to be in the base.
     auth_token :        str, optional
                         Your user's auth token (not the base token). Can either
-                        provided explicitly or be set as ``SEATABLE_TOKEN``
-                        environment variable.
+                        be provided explicitly, stored in a secret file, or set
+                        as ``SEATABLE_TOKEN`` environment variable.
     server :            str, optional
                         Must be provided explicitly or set as ``SEATABLE_SERVER``
                         environment variable.
@@ -312,39 +272,43 @@ def find_base(base=None, required_table=None, auth_token=None, server=None):
 
     """
     if isinstance(required_table, type(None)) and isinstance(base, type(None)):
-        raise ValueError('`base` and `required_table` must not both be `None`')
+        raise ValueError("`base` and `required_table` must not both be `None`")
 
     if not server:
-        server = os.environ.get('SEATABLE_SERVER')
+        server = os.environ.get("SEATABLE_SERVER")
 
     if not auth_token:
-        auth_token = os.environ.get('SEATABLE_TOKEN')
+        auth_token = resolve_auth_token(server=server)
 
     account = get_account(server=server, auth_token=auth_token)
 
     # Now find the base
-    workspaces = account.list_workspaces()['workspace_list']
+    workspaces = account.list_workspaces()["workspace_list"]
 
     # Find candidate bases
     cand_bases = []
     for w in workspaces:
-        for b in w.get('table_list', []):
+        for b in w.get("table_list", []):
             # If base is not None, skip if this base is not a match
             if not isinstance(base, type(None)):
-                if not (b.get('id', None) == base or b['name'] == base or b['uuid'] == base):
+                if not (
+                    b.get("id", None) == base or b["name"] == base or b["uuid"] == base
+                ):
                     continue
-            cand_bases.append([b['workspace_id'], b['name']])
-        for b in w.get('shared_table_list', []):
+            cand_bases.append([b["workspace_id"], b["name"]])
+        for b in w.get("shared_table_list", []):
             # If base is not None, skip if this base is not a match
             if not isinstance(base, type(None)):
-                if not (b.get('id', None) == base or b['name'] == base or b['uuid'] == base):
+                if not (
+                    b.get("id", None) == base or b["name"] == base or b["uuid"] == base
+                ):
                     continue
-            cand_bases.append([b['workspace_id'], b['name']])
+            cand_bases.append([b["workspace_id"], b["name"]])
 
     # Complain if no matches
     if not len(cand_bases):
         if isinstance(base, type(None)):
-            raise ValueError('Did not find a single base.')
+            raise ValueError("Did not find a single base.")
         else:
             raise ValueError(f'Did not find a base "{base}"')
 
@@ -353,17 +317,20 @@ def find_base(base=None, required_table=None, auth_token=None, server=None):
     if not isinstance(required_table, type(None)):
         for bs in cand_bases:
             bb = account.get_base(*bs)
-            for t in bb.get_metadata().get('tables', []):
-                if t.get('name', None) == required_table or t.get('_id', None) == required_table:
+            for t in bb.get_metadata().get("tables", []):
+                if (
+                    t.get("name", None) == required_table
+                    or t.get("_id", None) == required_table
+                ):
                     bases.append(bs)
                     break
     else:
         bases = cand_bases
 
     if len(bases) == 0:
-        raise ValueError(f'Did not find a matching base')
+        raise ValueError(f"Did not find a matching base")
     elif len(bases) > 1:
-        raise ValueError(f'Found multiple matching bases. Please be more specific.')
+        raise ValueError(f"Found multiple matching bases. Please be more specific.")
 
     workspace_id, base_name = bases[0]
 
@@ -372,40 +339,46 @@ def find_base(base=None, required_table=None, auth_token=None, server=None):
 
 def write_access(func):
     """Decorator to check for write access to Table."""
+
     @functools.wraps(func)
     def inner(*args, **kwargs):
         self = args[0]
 
-        if 'Column' in str(type(self)):
+        if "Column" in str(type(self)):
             table = self.table
         else:
             table = self
 
         if table.read_only:
-            raise ValueError('Table is read-only to prevent accidental edits. '
-                             'Please initialize with `read_only=False` to allow '
-                             'writing to it.')
+            raise ValueError(
+                "Table is read-only to prevent accidental edits. "
+                "Please initialize with `read_only=False` to allow "
+                "writing to it."
+            )
         return func(*args, **kwargs)
+
     return inner
 
 
 def check_token(func):
     """Decorator to check if token is expired and refresh if needed."""
+
     @functools.wraps(func)
     def inner(*args, **kwargs):
         self = args[0]
 
         # If this is not the table itself (i.e. the Column or the index),
         # get the actual table
-        if not 'Table' in str(type(self)):
+        if not "Table" in str(type(self)):
             self = self.table
 
         # If less than a minute to go, refresh base
         if self._token_time_left() <= 60:
-            logger.info('Refreshing Java Web token.')
+            logger.info("Refreshing Java Web token.")
             self.auth()
 
         return func(*args, **kwargs)
+
     return inner
 
 
@@ -420,7 +393,7 @@ def suppress_print(func):
     @functools.wraps(func)
     def inner(*args, **kwargs):
         # Set stdout to nothing
-        sys.stdout = open(os.devnull, 'w')
+        sys.stdout = open(os.devnull, "w")
         try:
             res = func(*args, **kwargs)
         except BaseException:
@@ -429,6 +402,7 @@ def suppress_print(func):
             sys.stdout = sys.__stdout__
 
         return res
+
     return inner
 
 
@@ -459,21 +433,23 @@ def validate_dtype(table, column, values):
             continue
 
         ok = True
-        if dtype in ('text', 'long text', 'single-select'):
+        if dtype in ("text", "long text", "single-select"):
             if not isinstance(v, str):
                 ok = False
-        elif dtype in ('multiple-select', ):
+        elif dtype in ("multiple-select",):
             if not isinstance(v, (str, list)):
                 ok = False
-        elif dtype in ('number', ):
+        elif dtype in ("number",):
             if not isinstance(v, numbers.Number):
                 ok = False
-        elif dtype == 'date':
+        elif dtype == "date":
             if not isinstance(v, (numbers.Number, str, dt.datetime, np.datetime64)):
                 ok = False
 
         if not ok:
-            raise TypeError(f'Trying to write {type(v)} to "{column}" column ({dtype}).')
+            raise TypeError(
+                f'Trying to write {type(v)} to "{column}" column ({dtype}).'
+            )
 
 
 def validate_table(table):
@@ -523,13 +499,13 @@ def validate_values(values, col=None):
             values = values.astype(np.int32)
     elif values.dtype in (float, np.float32, np.float64):
         if any(np.isinf(values)):
-            raise ValueError('At least some values are non-finite.')
+            raise ValueError("At least some values are non-finite.")
 
     # Dates must be given as strings "YEAR-MONTH-DAY HOUR:MINUTE:SECONDS"
-    if col.dtype == 'date':
+    if col.dtype == "date":
         # If object type make sure each value is converted correctly
         # "string[python]" is pandas' string type
-        if values.dtype in ('O', 'string[python]'):
+        if values.dtype in ("O", "string[python]"):
             # Do not use np.isnan here!
             not_nan = values != None
 
@@ -542,39 +518,43 @@ def validate_values(values, col=None):
                     # For strings we won't do any extra checking
                     continue
                 elif isinstance(v, dt.date):
-                    values[i] = dt.date.strftime(v, '%Y-%m-%d %H:%M:%S')
+                    values[i] = dt.date.strftime(v, "%Y-%m-%d %H:%M:%S")
                 elif isinstance(v, np.datetime64):
-                    values[i] = np.datetime_as_string(v, unit='m').replace('T', ' ')
+                    values[i] = np.datetime_as_string(v, unit="m").replace("T", " ")
                 else:
-                    raise TypeError('Dates must be given as string(s) (e.g. '
-                                    '"2021-10-01 10:10"), or as datetime or '
-                                    f'numpy.datetime64 objects. Got "{v}" '
-                                    f'({type(v)}).')
+                    raise TypeError(
+                        "Dates must be given as string(s) (e.g. "
+                        '"2021-10-01 10:10"), or as datetime or '
+                        f'numpy.datetime64 objects. Got "{v}" '
+                        f"({type(v)})."
+                    )
         elif values.dtype.type in (np.datetime64, pd.Timestamp):
             # We need strings formatted like this "2012-10-01 14:01"
             # Note that we also need to cater for empty columns
             is_date = ~np.isnan(values)
             dates = values[is_date]
-            dates_str = np.datetime_as_string(dates, unit='m')
-            dates_str = [d.replace('T', ' ') for d in dates_str]
+            dates_str = np.datetime_as_string(dates, unit="m")
+            dates_str = [d.replace("T", " ") for d in dates_str]
 
             # Rewrite values
-            values = np.zeros(len(values), dtype='O')
+            values = np.zeros(len(values), dtype="O")
             values[is_date] = dates_str
             values[~is_date] = None
         # If non-string (i.e. numeric) array
-        elif values.dtype.kind != 'U':
-            raise TypeError('Dates must be given as string(s) (e.g. '
-                            '"2021-10-01 10:10"), or as datetime or '
-                            f'numpy.datetime64 objects. Got {values.dtype}.')
-    elif col.dtype in ('single-select', 'multiple-select'):
-        if col.meta['data']['options']:
-            options = [o['name'] for o in col.meta['data']['options']]
+        elif values.dtype.kind != "U":
+            raise TypeError(
+                "Dates must be given as string(s) (e.g. "
+                '"2021-10-01 10:10"), or as datetime or '
+                f"numpy.datetime64 objects. Got {values.dtype}."
+            )
+    elif col.dtype in ("single-select", "multiple-select"):
+        if col.meta["data"]["options"]:
+            options = [o["name"] for o in col.meta["data"]["options"]]
         else:
             options = []
         not_none = ~pd.isnull(values)  # None is never in options
 
-        if col.dtype == 'multiple-select':
+        if col.dtype == "multiple-select":
             unpacked = [v for l in values[not_none] for v in l]
         else:
             unpacked = values[not_none]
@@ -583,11 +563,13 @@ def validate_values(values, col=None):
         not_options = ~np.isin(unpacked, options)
         if any(not_options):
             miss = unpacked[not_options].astype(str).tolist()
-            logger.warning('Some of the values to write are not currently '
-                           f'among options for column "{col.name}" ({col.dtype}):'
-                           f' {", ".join(miss)}.\nThese will be added '
-                           'automatically but you will need to refresh the '
-                           'website for them to show up.')
+            logger.warning(
+                "Some of the values to write are not currently "
+                f'among options for column "{col.name}" ({col.dtype}):'
+                f" {', '.join(miss)}.\nThese will be added "
+                "automatically but you will need to refresh the "
+                "website for them to show up."
+            )
             # Make sure we're fetching meta data again
             col.table._stale = True
 
@@ -610,7 +592,7 @@ def make_records(table):
     records :   list of dicts
 
     """
-    records = table.to_dict(orient='records')
+    records = table.to_dict(orient="records")
 
     records = [{k: v for k, v in r.items() if list_or_not_null(v)} for r in records]
 
@@ -633,6 +615,7 @@ def flatten(x):
     for v in x:
         l += flatten(v)
     return l
+
 
 def dict_replace(d, key, new_values):
     """Recursively traverse a dict of dicts and replace values for given key.
@@ -690,25 +673,24 @@ def is_equal_array(a, b):
     # Turn categoricals into string arrays because otherwise elementwise
     # comparison will fail
     if isinstance(a, pd.core.arrays.categorical.Categorical):
-        a = a.astype('string[python]')
+        a = a.astype("string[python]")
 
     if not isinstance(a, (np.ndarray, pd.Series, pd.core.arrays.StringArray)):
         raise TypeError(f'Expected array or Series, got "{type(a)}"')
     if not isinstance(b, (np.ndarray, pd.Series, pd.core.arrays.StringArray)):
         raise TypeError(f'Expected array or Series, got "{type(b)}"')
 
-    if isinstance(a, np.ndarray) and (a.dtype.kind == 'U'):
-            a = pd.array(a)
+    if isinstance(a, np.ndarray) and (a.dtype.kind == "U"):
+        a = pd.array(a)
 
-    if isinstance(b, np.ndarray) and (b.dtype.kind == 'U'):
-            b = pd.array(b)
+    if isinstance(b, np.ndarray) and (b.dtype.kind == "U"):
+        b = pd.array(b)
 
     comp = a == b
     if isinstance(comp, pd.Series):
         comp = comp.values
     elif isinstance(comp, bool):
-        raise ValueError(f'Elementwise comparison failed for {a.dtype} and '
-                         f'{b.dtype}')
+        raise ValueError(f"Elementwise comparison failed for {a.dtype} and {b.dtype}")
 
     # Set cases where `a` and `b` are NA to True
     comp[pd.isnull(comp) & pd.isnull(a) & pd.isnull(b)] = True

@@ -5,7 +5,8 @@ import urllib
 
 import pandas as pd
 
-from .utils import get_account, find_base
+from .auth import get_account
+from .utils import find_base
 from .base import Table
 
 

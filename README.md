@@ -1,8 +1,11 @@
 # sea-serpent
 A dataframe-like wrapper around the [SeaTable](https://seatable.io/en/) API.
 
-This library tries to make interacting with SeaTables as easy as if you were
-working with a local pandas DataFrame.
+## Highlights
+- **DataFrame-like interface**: Interact with your tables as if they were local pandas DataFrames. No more wrestling with the API!
+- **Automatic data type handling**: No more manual conversions. Just work with your data and let `sea-serpent` handle the rest.
+- **Read and write access**: Fetch data, add new columns, update existing values, and even create new tables - all with the same intuitive interface.
+- **Easy authentication management**: Store your API tokens securely and switch between multiple SeaTable instances with ease.
 
 ## Install
 
@@ -22,16 +25,38 @@ pip3 install git+https://github.com/schlegelp/sea-serpent@main
 
 ### Getting your API (auth) token
 
+In newer versions of SeaTable, you can get your API token directly from the website:
+Go to Personal Settings -> Account Token and copy the token from there. Then you can store it for later use:
+
+```python
+>>> import seaserpent as ss
+>>> ss.set_auth_token(token='YOUR_ACCOUNT_TOKEN', server='https://cloud.seatable.io')
+Saved SeaTable auth token to ~/.seaserpent/secrets/instance.cloud.seatable.io.json
+'YOUR_ACCOUNT_TOKEN'
+```
+
+If you work with an older instance of SeaTable, you can get your API token by providing your username and password:
+
 ```python
 >>> import seaserpent as ss
 >>> ss.get_auth_token(username='USER',
 ...                   password='PASSWORD',
 ...                   server='https://cloud.seatable.io')
-{'token': 'somelongassstring1234567@£$^@£$^£'}
+Saved SeaTable auth token to ~/.seaserpent/secrets/instance.cloud.seatable.io.json
+{'token': 'YOUR_ACCOUNT_TOKEN'}
 ```
 
-For future use, set your default server and auth token as `SEATABLE_SERVER` and
-`SEATABLE_TOKEN` environment variable, respectively.
+ Note how the token is tied to a specific server. This enables you to work with multiple SeaTable instances at
+ the same time by just switching the server URL and let `sea-serpent` handle the rest. When working with tables,
+ you can either provide the server explicitly (via the `server` argument) or set a default server URL via the `SEATABLE_SERVER` environment variable.
+
+For legacy reasons, we also support a `SEATABLE_TOKEN` environment variable for the auth token. The resolution
+order is:
+
+1. Explicit `auth_token` via `server` argument
+2. Host-specific secret file: `instance.<host>.json`
+3. General secret file: `seatable_secret.json`
+4. `SEATABLE_TOKEN` environment variable (legacy)
 
 ### Initializing a table
 
@@ -41,7 +66,6 @@ you can initialize the connection with just the name:
 ```python
 >>> import seaserpent as ss
 >>> # Initialize the table
->>> # (if there are multiple tables with this name you need to provide the base too)
 >>> table = ss.Table(table='MyTable')
 >>> table
 SeaTable <"MyTable", 10 rows, 2 columns>
@@ -52,6 +76,8 @@ SeaTable <"MyTable", 10 rows, 2 columns>
 1         2          B
 2         3          C
 ```
+
+If there are multiple tables with a given name, you need to also specify a `base`!
 
 ### Fetching data
 
@@ -178,18 +204,18 @@ Create column that pulls data from linked table:
 ...                         formula='lookup')           # how to aggregate data (lookup, mean, max, etc)
 ```
 
-## Random notes, limitations & oddities
+## Additional Notes & Limitations
 
 1. For convenience and ease of access we're using names to identify tables,
    columns and bases. Hence you should avoid duplicate names if at all possible.
-2. 64 bit integers/floats are truncated when writing to a table. I suspect this
+2. 64-bit integers/floats are truncated when writing to a table. I suspect this
    happens on the server side when decoding the JSON payload because manually
    entering large numbers through the web interface works perfectly well
-   (copy-pasting still fails though). Hence, `seaserpent` quietly downcasts 64
-   bit to 32 bit if possible and failing that converts to strings before uploading.
+   (copy-pasting still fails though). Hence, `sea-serpent` quietly downcasts 64
+   bit to 32-bit if possible and failing that converts to strings before uploading.
 3. The web interface appears to only show floats up to the 8th decimal. In the
    database the precision must be higher though because I have successfully
    written 1e-128 floats.
 4. Infinite values (i.e. `np.inf`) raise an error when trying to write.
 5. Cells manually cleared through the UI return empty strings (``''``). By
-   default, ``sea-serpent`` will convert these to ``None`` where possible.
+   default, ``sea-serpent`` will silenelty convert these to ``None``.
