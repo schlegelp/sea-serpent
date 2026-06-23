@@ -53,6 +53,10 @@ if not logger.handlers:
 
 NoneType = type(None)
 
+#: dtable-db returns at most this many rows per SQL request (server-side cap),
+#: regardless of the LIMIT in the query. We page around it with LIMIT/OFFSET.
+MAX_ROWS_PER_QUERY = 10000
+
 
 class Table:
     """A remote data table.
@@ -979,6 +983,19 @@ class Table:
             if isinstance(row.old_value, dict):
                 row.old_value = row.old_value["text"]
 
+            # Convert strings
+            if self.pandas_dtypes[row.column] == pd.StringDtype():
+                row.old_value = str(row.old_value)
+
+            # Check if we need to add a new category
+            if isinstance(
+                table[row.column].dtype, pd.CategoricalDtype
+            ) and not pd.isnull(row.old_value):
+                if row.old_value not in table[row.column].cat.categories:
+                    table[row.column] = table[row.column].cat.add_categories(
+                        [row.old_value]
+                    )
+
             table.loc[row.row_id, row.column] = row.old_value
 
         return table
@@ -1554,7 +1571,7 @@ class Table:
 
     def to_frame(self, row_id_index=True):
         """Download entire table as pandas DataFrame."""
-        data = self.base.query(f"SELECT * FROM {self.name} LIMIT {self.shape[0]}")
+        data = self.query(f"SELECT * FROM {self.name}", no_limit=True)
         return process_records(
             data,
             columns=self.columns,
@@ -1572,9 +1589,10 @@ class Table:
                     The SQL query. The "FROM {TABLENAME}" will be automatically
                     added to the end of the query if not already present.
         no_limit :  bool
-                    By default, the SeaTable API limits queries to 100 rows. If
-                    True, we will override this by adding `LIMIT {table.shape[0]}`
-                    to the query.
+                    By default, the SeaTable API limits queries to 100 rows (and
+                    dtable-db never returns more than MAX_ROWS_PER_QUERY rows per
+                    request). If True, we page through the results with
+                    LIMIT/OFFSET to fetch all matching rows.
         convert :   bool
                     Whether to process raw values into something more readable.
                     Importantly this parses single/multi-select values and
@@ -1591,10 +1609,63 @@ class Table:
 
         if "from" not in query.lower():
             query = f"{query} FROM {self.name}"
-        if no_limit and "LIMIT" not in query:
-            query += f" LIMIT {self.shape[0]}"
+        if no_limit and "LIMIT" not in query.upper():
+            # Page around dtable-db's hard MAX_ROWS_PER_QUERY-per-request cap.
+            return self._query_all(query, convert=convert)
         logger.debug(f"Running SQL query: {query}")
         return self.base.query(query, convert=convert)
+
+    def _query_all(self, query, convert=True):
+        """Run a SELECT query, paging with LIMIT/OFFSET to fetch ALL rows.
+
+        Works around dtable-db's hard MAX_ROWS_PER_QUERY-row-per-request limit
+        by issuing repeated requests at increasing OFFSET until a short (or
+        empty) page is returned.
+
+        Parameters
+        ----------
+        query :     str
+                    A SELECT query without a LIMIT/OFFSET clause.
+        convert :   bool
+                    See `Table.query`.
+
+        Returns
+        -------
+        list
+                    Records (list of dicts) across all pages.
+
+        """
+        # Use the known row count (if available) purely to size the progress bar.
+        try:
+            total = self.shape[0]
+            if not isinstance(total, numbers.Number):
+                total = None
+        except Exception:
+            total = None
+
+        rows = []
+        offset = 0
+        page_size = MAX_ROWS_PER_QUERY
+        pbar = (
+            tqdm(total=total, desc="Fetching rows", leave=False, disable=not self.progress)
+            if total
+            else None
+        )
+        try:
+            while True:
+                paged = f"{query} LIMIT {page_size} OFFSET {offset}"
+                logger.debug(f"Running SQL query: {paged}")
+                page = self.base.query(paged, convert=convert)
+                rows.extend(page)
+                if pbar is not None:
+                    pbar.update(len(page))
+                if len(page) < page_size:
+                    break
+                offset += page_size
+        finally:
+            if pbar is not None:
+                pbar.close()
+        return rows
 
 
 class Column:
@@ -2389,9 +2460,9 @@ class iLocIndexer:
             return process_records(
                 data,
                 columns=self.table.columns,
-                dtypes=self.table.pandas_dtypes.to_dict()
-                if self.table.sanitize
-                else None,
+                dtypes=(
+                    self.table.pandas_dtypes.to_dict() if self.table.sanitize else None
+                ),
             )
 
     def parse_slice(self, s):
@@ -2416,7 +2487,9 @@ def create_query(table, columns=None, where=None, limit=None):
     if isinstance(where, slice) and not isinstance(limit, type(None)):
         raise TypeError("Unable to construct WHERE query with limit and slice as index")
 
-    if not isinstance(columns, type(None)) and columns != "*":
+    if not isinstance(columns, type(None)) and not (
+        isinstance(columns, str) and columns == "*"
+    ):
         columns = make_iterable(columns).astype(str)
         q = "SELECT "
         for col in columns:
