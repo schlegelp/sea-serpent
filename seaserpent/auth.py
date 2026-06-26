@@ -5,7 +5,7 @@ import logging
 from urllib.parse import urlparse
 
 # from seatable_api import Account
-from .patch import Account
+from .patch import Account, SeaTableAPI
 
 logger = logging.getLogger(__name__)
 logger.setLevel("INFO")
@@ -157,6 +157,35 @@ def set_auth_token(token, server=None, save_to_secret=True):
         path = save_secret(token, server=server)
         print(f"Saved SeaTable auth token to {path}")
     return token
+
+
+def get_base_from_token(base_token, server):
+    """Authenticate a base directly with a fine-grained base-level API token.
+
+    Unlike the account flow, this skips workspace enumeration and the
+    temp-api-token exchange. It calls ``/api/v2.1/dtable/app-access-token/``
+    directly, which is the endpoint that accepts base-level (fine-grained)
+    API tokens.
+
+    Parameters
+    ----------
+    base_token :        str
+                        A fine-grained, base-level SeaTable API token (read or
+                        read+write). Not to be confused with the account token.
+    server :            str
+                        URL to the SeaTable instance.
+
+    Returns
+    -------
+    SeaTableAPI
+                        An authenticated base object. After ``auth()`` it
+                        exposes ``dtable_name``, ``workspace_id`` and
+                        ``dtable_uuid``.
+
+    """
+    base = SeaTableAPI(base_token, server)
+    base.auth()
+    return base
 
 
 def get_account(auth_token=None, server=None):

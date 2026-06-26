@@ -109,7 +109,7 @@ def share_base(base, users, permission='r', table=None, server=None, auth_token=
     account = get_account(server=server, auth_token=auth_token)
 
     if not table:
-        workspace_id, base_name, _, _ = find_base(base=base, auth_token=auth_token, server=server)
+        workspace_id, base_name, _, _, _ = find_base(base=base, auth_token=auth_token, server=server)
         url = f'{account.server_url}/api/v2.1/workspace/{workspace_id}/dtable/{base_name}/share/'
     else:
         if ':' in table:
@@ -221,7 +221,7 @@ def import_common_datasets(dataset, target_base, server=None, auth_token=None):
     else:
         dataset_id = dataset
 
-    workspace_id, base_name, _, _ = find_base(base=target_base, auth_token=auth_token, server=server)
+    workspace_id, base_name, _, _, _ = find_base(base=target_base, auth_token=auth_token, server=server)
     base = account.get_base(workspace_id, base_name)
 
     url = f'{account.server_url}/api/v2.1/dtable/common-datasets/{dataset_id}/import/'

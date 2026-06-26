@@ -58,6 +58,25 @@ order is:
 3. General secret file: `seatable_secret.json`
 4. `SEATABLE_TOKEN` environment variable (legacy)
 
+#### Fine-grained (base-level) access tokens
+
+Besides account tokens, SeaTable can issue **base-level "API tokens"** that are restricted to a
+single base and can be read-only or read+write (Base -> ... -> "Advanced" -> "API Tokens"). These
+work everywhere an account token does — pass one as `auth_token` (or store it via `set_auth_token` /
+`SEATABLE_TOKEN`) and `sea-serpent` auto-detects the token type:
+
+```python
+>>> import seaserpent as ss
+>>> t = ss.Table('MyTable',
+...              auth_token='YOUR_BASE_TOKEN',
+...              server='https://cloud.seatable.io')
+```
+
+A base-level token is tied to exactly one base, so there is no base/workspace look-up — you don't
+even need to pass `base`. You still need to specify the `server` (explicitly or via
+`SEATABLE_SERVER`). Writes (including creating tables via `Table.new` / `Table.from_frame`) require a
+read+write token; a read-only token will be rejected by the server on write attempts.
+
 ### Initializing a table
 
 `Table` works as connection to a single SeaTable table. If its name is unique,

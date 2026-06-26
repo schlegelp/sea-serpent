@@ -71,9 +71,14 @@ class Table:
                     the base can greatly speed up initialization. If not
                     provided will try to find a base containing ``table``.
     auth_token :    str, optional
-                    Your user's auth token (not the base token). Can either
-                    provided explicitly or be set as ``SEATABLE_TOKEN``
-                    environment variable.
+                    Your user's account auth token or a fine-grained,
+                    base-level access token (read or read+write). The token
+                    type is auto-detected. Can either be provided explicitly
+                    or be set as ``SEATABLE_TOKEN`` environment variable.
+    base_token :    str, optional
+                    A fine-grained, base-level access token. Equivalent to
+                    passing it as ``auth_token`` but skips token-type
+                    auto-detection.
     server :        str, optional
                     Must be provided explicitly or set as ``SEATABLE_SERVER``
                     environment variable.
@@ -99,6 +104,7 @@ class Table:
         table,
         base=None,
         auth_token=None,
+        base_token=None,
         server=None,
         read_only=True,
         max_operations=1000,
@@ -114,13 +120,18 @@ class Table:
 
         # Find base and table
         if not isinstance(base, SeaTableAPI):
-            (self.workspace_id, self.base_name, self.auth_token, self.server) = (
-                find_base(
-                    base=base,
-                    server=server,
-                    auth_token=auth_token,
-                    required_table=table if not isinstance(table, int) else None,
-                )
+            (
+                self.workspace_id,
+                self.base_name,
+                self.auth_token,
+                self.base_token,
+                self.server,
+            ) = find_base(
+                base=base,
+                server=server,
+                auth_token=auth_token,
+                base_token=base_token,
+                required_table=table if not isinstance(table, int) else None,
             )
             # This sets/refreshes self.base
             self.auth()
@@ -129,7 +140,8 @@ class Table:
             self.server = base.server_url
             self.base_name = base.dtable_name
             self.workspace_id = base.workspace_id
-            self.auth_token = None
+            self.auth_token = auth_token
+            self.base_token = base_token
 
         if isinstance(table, int):
             tables = self.base.get_metadata().get("tables", [])
@@ -569,7 +581,7 @@ class Table:
         return table
 
     @classmethod
-    def new(cls, table_name, base, columns=None, auth_token=None, server=None):
+    def new(cls, table_name, base, columns=None, auth_token=None, base_token=None, server=None):
         """Create a new table.
 
         Parameters
@@ -578,6 +590,14 @@ class Table:
                         Name of the new table.
         base :          str | int
                         Name or ID of base.
+        auth_token :    str, optional
+                        Account auth token or a fine-grained, base-level access
+                        token (auto-detected). Creating a table requires a
+                        read+write token.
+        base_token :    str, optional
+                        A fine-grained, read+write base-level access token.
+                        Equivalent to passing it as ``auth_token`` but skips
+                        token-type auto-detection.
         columns :       list, optional
                         If provided, must be a list of dicts:
 
@@ -594,14 +614,19 @@ class Table:
                         Will be initialized with `read_only=False`.
 
         """
-        # Find the base
-        (workspace_id, base_name, auth_token, server) = find_base(
-            base=base, server=server, auth_token=auth_token
+        # Find the base (auto-detects account vs. base-level token)
+        (workspace_id, base_name, auth_token, base_token, server) = find_base(
+            base=base, server=server, auth_token=auth_token, base_token=base_token
         )
-        account = Account(None, None, server)
-        account.token = auth_token
-        # Initialize the base
-        base = account.get_base(workspace_id, base_name)
+        # Initialize the base. A base-level token authenticates directly; an
+        # account token goes through the temp-api-token exchange.
+        if base_token:
+            base = SeaTableAPI(base_token, server)
+            base.auth()
+        else:
+            account = Account(None, None, server)
+            account.token = auth_token
+            base = account.get_base(workspace_id, base_name)
 
         existing_tables = base.get_metadata()["tables"]
         existing_names = [t["name"] for t in existing_tables]
@@ -616,6 +641,7 @@ class Table:
             base=base,
             read_only=False,
             auth_token=auth_token,
+            base_token=base_token,
             server=server,
         )
 
@@ -649,11 +675,18 @@ class Table:
 
     def auth(self):
         """Authenticate."""
-        account = Account(None, None, self.server)
-        account.token = self.auth_token
+        # A fine-grained, base-level token authenticates the base directly
+        # (via /api/v2.1/dtable/app-access-token/), bypassing the account flow.
+        if getattr(self, "base_token", None):
+            base = SeaTableAPI(self.base_token, self.server)
+            base.auth()
+            self.base = base
+        else:
+            account = Account(None, None, self.server)
+            account.token = self.auth_token
 
-        # Initialize the base
-        self.base = account.get_base(self.workspace_id, self.base_name)
+            # Initialize the base
+            self.base = account.get_base(self.workspace_id, self.base_name)
 
     @write_access
     @check_token

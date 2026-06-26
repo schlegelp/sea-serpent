@@ -8,7 +8,7 @@ import datetime as dt
 import numpy as np
 import pandas as pd
 
-from .auth import get_account, resolve_auth_token
+from .auth import get_account, resolve_auth_token, get_base_from_token
 
 from seatable_api.constants import ColumnTypes
 
@@ -245,8 +245,16 @@ def validate_comparison(column, other, allow_iterable=False):
     )
 
 
-def find_base(base=None, required_table=None, auth_token=None, server=None):
+def find_base(base=None, required_table=None, auth_token=None, base_token=None, server=None):
     """Find a base matching some parameters.
+
+    Accepts both account-level tokens and fine-grained, base-level access
+    tokens. With an account token the base is looked up by enumerating the
+    account's workspaces. A base-level token is tied to exactly one base, so
+    the lookup is skipped and the base is authenticated directly. The token
+    type is auto-detected: the account flow is tried first and, if it returns
+    a 401/403 (which happens for a base-level token), we fall back to direct
+    base authentication.
 
     Parameters
     ----------
@@ -256,9 +264,13 @@ def find_base(base=None, required_table=None, auth_token=None, server=None):
     required_table :    str, optional
                         Name of a table that is required to be in the base.
     auth_token :        str, optional
-                        Your user's auth token (not the base token). Can either
-                        be provided explicitly, stored in a secret file, or set
-                        as ``SEATABLE_TOKEN`` environment variable.
+                        Your user's account auth token or a fine-grained,
+                        base-level access token. Can be provided explicitly,
+                        stored in a secret file, or set as ``SEATABLE_TOKEN``
+                        environment variable.
+    base_token :        str, optional
+                        A fine-grained, base-level access token. If provided,
+                        the account flow is skipped entirely.
     server :            str, optional
                         Must be provided explicitly or set as ``SEATABLE_SERVER``
                         environment variable.
@@ -267,23 +279,42 @@ def find_base(base=None, required_table=None, auth_token=None, server=None):
     -------
     workspace_id :      int
     base_name :         str
-    auth_token :        str
+    auth_token :        str | None
+                        The account token used, or ``None`` if a base-level
+                        token was used instead.
+    base_token :        str | None
+                        The base-level token, if one was used (passed
+                        explicitly or auto-detected); otherwise ``None``.
     server :            str
 
     """
-    if isinstance(required_table, type(None)) and isinstance(base, type(None)):
-        raise ValueError("`base` and `required_table` must not both be `None`")
-
     if not server:
         server = os.environ.get("SEATABLE_SERVER")
+
+    # An explicit base-level token resolves directly, without ever touching
+    # account-level endpoints.
+    if base_token:
+        sbase = get_base_from_token(base_token, server)
+        return sbase.workspace_id, sbase.dtable_name, None, base_token, server
+
+    if isinstance(required_table, type(None)) and isinstance(base, type(None)):
+        raise ValueError("`base` and `required_table` must not both be `None`")
 
     if not auth_token:
         auth_token = resolve_auth_token(server=server)
 
     account = get_account(server=server, auth_token=auth_token)
 
-    # Now find the base
-    workspaces = account.list_workspaces()["workspace_list"]
+    # Now find the base. A fine-grained, base-level token can't use account
+    # endpoints and gets rejected with a 401 here -> fall back to direct base
+    # authentication (the token is tied to exactly one base).
+    try:
+        workspaces = account.list_workspaces()["workspace_list"]
+    except ConnectionError as e:
+        if e.args and e.args[0] in (401, 403):
+            sbase = get_base_from_token(auth_token, server)
+            return sbase.workspace_id, sbase.dtable_name, None, auth_token, server
+        raise
 
     # Find candidate bases
     cand_bases = []
@@ -334,7 +365,7 @@ def find_base(base=None, required_table=None, auth_token=None, server=None):
 
     workspace_id, base_name = bases[0]
 
-    return workspace_id, base_name, auth_token, server
+    return workspace_id, base_name, auth_token, None, server
 
 
 def write_access(func):
