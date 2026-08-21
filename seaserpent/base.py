@@ -12,10 +12,11 @@ import numpy as np
 import pandas as pd
 
 from functools import partial
+from tqdm.auto import trange, tqdm
+from concurrent.futures import ThreadPoolExecutor
 
 # from seatable_api.main import SeaTableAPI
 from seatable_api.constants import ColumnTypes
-from tqdm.auto import trange, tqdm
 
 from .utils import (
     process_records,
@@ -56,6 +57,11 @@ NoneType = type(None)
 #: dtable-db returns at most this many rows per SQL request (server-side cap),
 #: regardless of the LIMIT in the query. We page around it with LIMIT/OFFSET.
 MAX_ROWS_PER_QUERY = 10000
+
+#: How many of those pages to fetch concurrently. dtable-db shows no OFFSET
+#: penalty and parallelises queries happily, but it is shared with the web UI -
+#: so this is deliberately modest rather than "as many pages as there are".
+MAX_QUERY_WORKERS = 4
 
 
 class Table:
@@ -1602,9 +1608,18 @@ class Table:
                 batch_other_rows_ids_map,
             )
 
-    def to_frame(self, row_id_index=True):
-        """Download entire table as pandas DataFrame."""
-        data = self.query(f"SELECT * FROM {self.name}", no_limit=True)
+    def to_frame(self, row_id_index=True, workers=None):
+        """Download entire table as pandas DataFrame.
+
+        Parameters
+        ----------
+        row_id_index :  bool
+                        Whether to use the row IDs as index.
+        workers :       int, optional
+                        How many pages to fetch in parallel. See `Table.query`.
+
+        """
+        data = self.query(f"SELECT * FROM {self.name}", no_limit=True, workers=workers)
         return process_records(
             data,
             columns=self.columns,
@@ -1613,7 +1628,7 @@ class Table:
         )
 
     @check_token
-    def query(self, query, no_limit=False, convert=True):
+    def query(self, query, no_limit=False, convert=True, workers=None):
         """Run SQL query against this table.
 
         Parameters
@@ -1630,6 +1645,10 @@ class Table:
                     Whether to process raw values into something more readable.
                     Importantly this parses single/multi-select values and
                     date columns into datetime objects.
+        workers :   int, optional
+                    Only relevant with ``no_limit=True``: how many pages to
+                    fetch in parallel. Defaults to ``MAX_QUERY_WORKERS``.
+                    Pass 1 to fetch them sequentially.
 
         Returns
         -------
@@ -1644,16 +1663,21 @@ class Table:
             query = f"{query} FROM {self.name}"
         if no_limit and "LIMIT" not in query.upper():
             # Page around dtable-db's hard MAX_ROWS_PER_QUERY-per-request cap.
-            return self._query_all(query, convert=convert)
+            return self._query_all(query, convert=convert, workers=workers)
         logger.debug(f"Running SQL query: {query}")
         return self.base.query(query, convert=convert)
 
-    def _query_all(self, query, convert=True):
+    def _query_all(self, query, convert=True, workers=None):
         """Run a SELECT query, paging with LIMIT/OFFSET to fetch ALL rows.
 
         Works around dtable-db's hard MAX_ROWS_PER_QUERY-row-per-request limit
-        by issuing repeated requests at increasing OFFSET until a short (or
-        empty) page is returned.
+        by issuing repeated requests at increasing OFFSET.
+
+        When the row count is known up front, every page offset is known too,
+        so the pages are fetched concurrently instead of one after another.
+        dtable-db costs the same at any OFFSET and handles parallel queries
+        fine, which takes the fetch from the sum of all pages down to roughly
+        the slowest single one.
 
         Parameters
         ----------
@@ -1661,6 +1685,9 @@ class Table:
                     A SELECT query without a LIMIT/OFFSET clause.
         convert :   bool
                     See `Table.query`.
+        workers :   int, optional
+                    How many pages to fetch in parallel. Defaults to
+                    ``MAX_QUERY_WORKERS``. Pass 1 to force the sequential path.
 
         Returns
         -------
@@ -1668,7 +1695,11 @@ class Table:
                     Records (list of dicts) across all pages.
 
         """
-        # Use the known row count (if available) purely to size the progress bar.
+        if workers is None:
+            workers = MAX_QUERY_WORKERS
+
+        # The row count sizes the progress bar and, more importantly, tells us
+        # every page offset in advance so they can be requested concurrently.
         try:
             total = self.shape[0]
             if not isinstance(total, numbers.Number):
@@ -1676,22 +1707,40 @@ class Table:
         except Exception:
             total = None
 
-        rows = []
-        offset = 0
         page_size = MAX_ROWS_PER_QUERY
         pbar = (
             tqdm(total=total, desc="Fetching rows", leave=False, disable=not self.progress)
             if total
             else None
         )
+
+        def fetch(offset):
+            paged = f"{query} LIMIT {page_size} OFFSET {offset}"
+            logger.debug(f"Running SQL query: {paged}")
+            page = self.base.query(paged, convert=convert)
+            if pbar is not None:
+                pbar.update(len(page))
+            return page
+
+        rows = []
+        offset = 0
         try:
+            offsets = list(range(0, int(total), page_size)) if total else []
+            if len(offsets) > 1 and workers > 1:
+                with ThreadPoolExecutor(max_workers=min(workers, len(offsets))) as ex:
+                    pages = list(ex.map(fetch, offsets))
+                for page in pages:
+                    rows.extend(page)
+                # `total` may be stale and the table may have grown since. If
+                # the final page came back full there may be more rows, so
+                # carry on sequentially from where the parallel pass stopped.
+                if len(pages[-1]) < page_size:
+                    return rows
+                offset = offsets[-1] + page_size
+
             while True:
-                paged = f"{query} LIMIT {page_size} OFFSET {offset}"
-                logger.debug(f"Running SQL query: {paged}")
-                page = self.base.query(paged, convert=convert)
+                page = fetch(offset)
                 rows.extend(page)
-                if pbar is not None:
-                    pbar.update(len(page))
                 if len(page) < page_size:
                     break
                 offset += page_size
