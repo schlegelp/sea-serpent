@@ -5,6 +5,7 @@ import jwt
 import numbers
 import requests
 import time
+import urllib.parse
 import warnings
 
 import datetime as dt
@@ -37,7 +38,9 @@ from .utils import (
     dict_replace,
     is_equal_array,
     is_array_like,
+    is_text_dtype,
 )
+from .endpoints import dtable_url, run_sql, request as api_request
 from .patch import SeaTableAPI, Account
 
 logger = logging.getLogger(__name__)
@@ -54,14 +57,29 @@ if not logger.handlers:
 
 NoneType = type(None)
 
-#: dtable-db returns at most this many rows per SQL request (server-side cap),
-#: regardless of the LIMIT in the query. We page around it with LIMIT/OFFSET.
+#: dtable-db returns at most this many rows per SQL request (server-side cap,
+#: SeaTable's default), regardless of the LIMIT in the query. We page around it
+#: with LIMIT/OFFSET. A server with a raised cap works as is; one with a LOWER
+#: cap would cut pages short, so this must not exceed the server's cap.
 MAX_ROWS_PER_QUERY = 10000
 
 #: How many of those pages to fetch concurrently. dtable-db shows no OFFSET
 #: penalty and parallelises queries happily, but it is shared with the web UI -
 #: so this is deliberately modest rather than "as many pages as there are".
 MAX_QUERY_WORKERS = 4
+
+
+#: Columns of `Table.fetch_logs()` with ``unpack=True`` / ``unpack=False``, and
+#: of `Table.fetch_row_logs()` (used for the empty results, too)
+UNPACKED_LOG_COLUMNS = [
+    "user", "app", "op_time", "op_id", "row_id", "column", "old_value", "new_value",
+]
+LOG_COLUMNS = [
+    "user", "app", "op_time", "op_id", "op_type", "rows_modified", "details",
+]
+ROW_LOG_COLUMNS = [
+    "id", "dtable_uuid", "row_id", "op_user", "op_type", "op_time", "detail",
+]
 
 
 class Table:
@@ -297,14 +315,11 @@ class Table:
     def collaborators(self):
         """List of all user with access to this table (cached)."""
         if isinstance(getattr(self, "_collaborators", None), type(None)):
-            url = (
-                f"{self.server}/dtable-server/api/v1/dtables/"
-                f"{self.base.dtable_uuid}/related-users/"
+            data = api_request(
+                self.base, "GET", dtable_url(self.base, "related-users/")
             )
-            r = requests.get(url, headers=self.base.headers)
-            r.raise_for_status()
 
-            self._collaborators = pd.DataFrame(r.json()["user_list"])
+            self._collaborators = pd.DataFrame(data["user_list"])
             col = self._collaborators.pop("name")  # bring name column to front
             self._collaborators.insert(0, col.name, col)
 
@@ -355,7 +370,7 @@ class Table:
     @property
     def server_info(self):
         """Server info."""
-        r = requests.get(f"{self.server}server-info")
+        r = requests.get(f"{self.server.rstrip('/')}/server-info/", timeout=30)
         r.raise_for_status()
         return r.json()
 
@@ -425,7 +440,7 @@ class Table:
         # Validate table
         df = validate_table(df)
 
-        if df[id_col].dtype in (object, "string[python]"):
+        if is_text_dtype(df[id_col].dtype):
             id_col_dtype = "text"
         else:
             id_col_dtype = map_columntype(df[id_col].dtype.kind).name.lower()
@@ -448,7 +463,7 @@ class Table:
 
             col = df[c]
 
-            if col.dtype in (object, "string[python]"):
+            if is_text_dtype(col.dtype):
                 # If all non-null values are lists
                 if all([isinstance(v, list) or pd.isnull(v) for v in col.values]):
                     dtype = "multiple_select"
@@ -544,24 +559,11 @@ class Table:
             for view in views:
                 # Generate view if it doesn't exist yet
                 if view["name"] not in existing_views:
-                    url = (
-                        f"{table.server}/dtable-server/api/v1/dtables/"
-                        f"{table.base.dtable_uuid}/views/"
-                        f"?table_name={table_name}"
-                    )
-                    r = requests.post(
-                        url, headers=table.base.headers, json={"name": view["name"]}
-                    )
-                    r.raise_for_status()
-
-                    # Data contains the ID of the view
-                    _ = r.json()
+                    table.base.add_view(table_name, view["name"])
 
                 # Now actually set the view
-                url = (
-                    f"{table.server}/dtable-server/api/v1/dtables/"
-                    f"{table.base.dtable_uuid}/views/{view['name']}"
-                    f"?table_name={table_name}"
+                url = dtable_url(
+                    table.base, f"views/{urllib.parse.quote(view['name'], safe='')}/"
                 )
 
                 # These are the parameters we can send
@@ -577,10 +579,13 @@ class Table:
                 )
                 data = {p: view[p] for p in params if p in view}
 
-                r = requests.put(url, headers=table.base.headers, json=data)
-                r.raise_for_status()
-
-                data = r.json()
+                api_request(
+                    table.base,
+                    "PUT",
+                    url,
+                    params={"table_name": table_name},
+                    json=data,
+                )
 
             logger.info("Views added.")
 
@@ -899,6 +904,12 @@ class Table:
         else:
             rows = np.asarray(rows)
 
+        # Text from pandas (e.g. a column of row IDs) arrives as an object array
+        if rows.dtype == object and pd.api.types.infer_dtype(rows) == "string":
+            if any(pd.isnull(rows)):
+                raise ValueError("Row IDs must not contain missing values.")
+            rows = rows.astype(str)
+
         if rows.dtype.kind == "U":
             miss = ~np.isin(rows, self.row_ids)
             if any(miss):
@@ -963,21 +974,21 @@ class Table:
             ):
                 return
 
-        url = self.base._table_server_url()
-
-        json_data = {"table_name": self.name}
-        r = requests.delete(
-            url, json=json_data, headers=self.base.headers, timeout=self.base.timeout
+        # Same request as seatable-api's `delete_table`, but with our errors
+        resp = api_request(
+            self.base, "DELETE", dtable_url(self.base, "tables/"),
+            json={"table_name": self.name},
         )
-        r.raise_for_status()
 
-        if "success" in r.content.decode():
+        if resp.get("success"):
             logger.info("Table successfully deleted!")
         else:
-            logger.warning(f"Something went wrong: {r.content.decode()}")
+            logger.warning(f"Something went wrong: {resp}")
 
     def time_machine(self, date, columns=None):
         """Recreate version of table at a given point in time.
+
+        Only reaches back as far as the server keeps logs (see `fetch_logs`).
 
         Important: this is work in progress and does currently not revert
         deleted or added columns/rows!
@@ -1043,6 +1054,10 @@ class Table:
     def fetch_logs(self, max_entries=25, max_time=None, unpack=True, progress=True):
         """Fetch activity logs for this table.
 
+        Note that the server only keeps a limited history: SeaTable's
+        default clean-up deletes operation logs after 14 days and row
+        activities after 30 days (on by default from SeaTable 6.2).
+
         Parameters
         ----------
         max_entries :   int
@@ -1086,15 +1101,12 @@ class Table:
             desc="Fetching logs", total=total, leave=False, disable=not progress
         ) as pbar:
             while True:
-                url = (
-                    f"{self.server}/dtable-server/api/v1/dtables/"
-                    f"{self.base.dtable_uuid}/operations/"
-                    f"?page={page}&per_page=25"
-                )  # per_page seems to be hard-coded
-                r = requests.get(url, headers=self.base.headers)
-                r.raise_for_status()
-
-                data = r.json()["operations"]
+                data = api_request(
+                    self.base,
+                    "GET",
+                    dtable_url(self.base, "operations/"),
+                    params={"page": page, "per_page": 25},
+                )["operations"]  # per_page seems to be hard-coded
 
                 # Stop if no more pages
                 if not data:
@@ -1134,7 +1146,11 @@ class Table:
                 page += 1
 
         # Combine
-        logs = pd.concat([ta for ta in logs if not ta.empty], axis=0)
+        logs = [ta for ta in logs if not ta.empty]
+        if not logs:
+            # No edits to this table in the history the server still keeps
+            return pd.DataFrame(columns=UNPACKED_LOG_COLUMNS if unpack else LOG_COLUMNS)
+        logs = pd.concat(logs, axis=0)
 
         if max_time:
             logs = logs[logs.op_time >= max_time]
@@ -1186,31 +1202,23 @@ class Table:
                     row_id = details["row_id"]
                     details["row_ids"] = [row_id]
                     details["updated"] = {row_id: details["updated"]}
-                    details["old_rows"] = {row_id: details["old_row"]}
+                    details["old_rows"] = {row_id: details.get("old_row")}
 
+                # The server doesn't always record the old values (e.g. some
+                # edits from the web page, or API edits on SeaTable 6.2), so
+                # missing ones are returned as None
+                old_rows = details.get("old_rows") or {}
                 for id in details["row_ids"]:
-                    for col, new_value in details["updated"][id].items():
+                    for col, new_value in details["updated"].get(id, {}).items():
                         # Skip internal columns like '_last_modifier'
                         if col.startswith("_"):
                             continue
-                        old_value = details["old_rows"][id].get(col, None)
+                        old_value = (old_rows.get(id) or {}).get(col, None)
                         unpacked.append(
                             [user, app, op_time, op_id, id, col, old_value, new_value]
                         )
 
-            logs = pd.DataFrame(
-                unpacked,
-                columns=[
-                    "user",
-                    "app",
-                    "op_time",
-                    "op_id",
-                    "row_id",
-                    "column",
-                    "old_value",
-                    "new_value",
-                ],
-            )
+            logs = pd.DataFrame(unpacked, columns=UNPACKED_LOG_COLUMNS)
 
             logs["column"] = self._col_ids_to_names(logs.column.values)
             for c in ["user", "app", "column"]:
@@ -1223,6 +1231,8 @@ class Table:
         self, ids, max_entries=25, max_time=None, unpack=True, progress=True
     ):
         """Fetch activity logs for given row(s).
+
+        Only reaches back as far as the server keeps logs (see `fetch_logs`).
 
         Parameters
         ----------
@@ -1285,15 +1295,12 @@ class Table:
                 entries = 0
                 page = 1
                 while True:
-                    url = (
-                        f"{self.server}/dtable-server/api/v1/dtables/"
-                        f"{self.base.dtable_uuid}/activities/"
-                        f"?row_id={i}&page={page}&per_page=25"
-                    )  # per_page seems to be hard-coded
-                    r = requests.get(url, headers=self.base.headers)
-                    r.raise_for_status()
-
-                    data = r.json()["activities"]
+                    data = api_request(
+                        self.base,
+                        "GET",
+                        dtable_url(self.base, "activities/"),
+                        params={"row_id": i, "page": page, "per_page": 25},
+                    )["activities"]  # per_page seems to be hard-coded
 
                     # Stop if no more pages
                     if not data:
@@ -1329,6 +1336,10 @@ class Table:
                     page += 1
 
         # Combine and return
+        logs = [ta for ta in logs if not ta.empty]
+        if not logs:
+            # No activity for these rows in the history the server still keeps
+            return pd.DataFrame(columns=ROW_LOG_COLUMNS)
         return pd.concat(logs, axis=0)
 
     @check_token
@@ -1475,9 +1486,10 @@ class Table:
 
         return data
 
+    @check_token
     def head(self, n=5):
         """Return top N rows as pandas DataFrame."""
-        data = self.base.query(f"SELECT * FROM {self.name} LIMIT {n}")
+        data = run_sql(self.base, f"SELECT * FROM {self.name} LIMIT {n}")
         return process_records(
             data,
             columns=self.columns,
@@ -1665,7 +1677,7 @@ class Table:
             # Page around dtable-db's hard MAX_ROWS_PER_QUERY-per-request cap.
             return self._query_all(query, convert=convert, workers=workers)
         logger.debug(f"Running SQL query: {query}")
-        return self.base.query(query, convert=convert)
+        return run_sql(self.base, query, convert=convert)
 
     def _query_all(self, query, convert=True, workers=None):
         """Run a SELECT query, paging with LIMIT/OFFSET to fetch ALL rows.
@@ -1717,7 +1729,7 @@ class Table:
         def fetch(offset):
             paged = f"{query} LIMIT {page_size} OFFSET {offset}"
             logger.debug(f"Running SQL query: {paged}")
-            page = self.base.query(paged, convert=convert)
+            page = run_sql(self.base, paged, convert=convert)
             if pbar is not None:
                 pbar.update(len(page))
             return page
@@ -2143,7 +2155,7 @@ class Column:
         if "name" not in resp:
             raise ValueError(f"Error writing to table: {resp}")
 
-        logger.info(f"Column renamed: {self.name} -> {self.new_name}")
+        logger.info(f"Column renamed: {self.name} -> {new_name}")
 
         # Update table meta data
         _ = self.table.fetch_meta()

@@ -1,5 +1,5 @@
 pandas
-seatable-api
+seatable-api>=2.7.2,<5
 numpy
 tqdm
 requests
