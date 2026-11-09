@@ -190,7 +190,19 @@ def process_records(records, columns=None, row_id_index=True, dtypes=None):
                 # will fail to coerce floats if the floats are not whole numbers.
                 # Because we're using `errors='ignore'` this will not raise an error
                 # but will just keep the floats as is.
-                df[c] = df[c].astype(dt, copy=False, errors="ignore")
+                # Numbers can arrive as text (e.g. newer auto-number values),
+                # which would make the conversion below give up
+                if (
+                    df[c].dtype == object
+                    and pd.api.types.is_numeric_dtype(dt)
+                    and not pd.api.types.is_bool_dtype(dt)
+                ):
+                    try:
+                        # Nullable types keep large whole numbers exact
+                        df[c] = pd.to_numeric(df[c], dtype_backend="numpy_nullable")
+                    except (ValueError, TypeError):
+                        pass
+                df[c] = df[c].astype(dt, errors="ignore")
 
     return df
 
