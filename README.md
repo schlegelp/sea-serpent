@@ -237,4 +237,4 @@ Create column that pulls data from linked table:
    written 1e-128 floats.
 4. Infinite values (i.e. `np.inf`) raise an error when trying to write.
 5. Cells manually cleared through the UI return empty strings (``''``). By
-   default, ``sea-serpent`` will silenelty convert these to ``None``.
+   default, ``sea-serpent`` will silently convert these to ``None``.
