@@ -190,9 +190,26 @@ def process_records(records, columns=None, row_id_index=True, dtypes=None):
                 # will fail to coerce floats if the floats are not whole numbers.
                 # Because we're using `errors='ignore'` this will not raise an error
                 # but will just keep the floats as is.
-                df[c] = df[c].astype(dt, copy=False, errors="ignore")
+                # Numbers can arrive as text (e.g. newer auto-number values),
+                # which would make the conversion below give up
+                if (
+                    df[c].dtype == object
+                    and pd.api.types.is_numeric_dtype(dt)
+                    and not pd.api.types.is_bool_dtype(dt)
+                ):
+                    try:
+                        # Nullable types keep large whole numbers exact
+                        df[c] = pd.to_numeric(df[c], dtype_backend="numpy_nullable")
+                    except (ValueError, TypeError):
+                        pass
+                df[c] = df[c].astype(dt, errors="ignore")
 
     return df
+
+
+def is_text_dtype(dtype):
+    """Object or pandas string dtype (the default for text from pandas 3.0)."""
+    return dtype == object or isinstance(dtype, pd.StringDtype)
 
 
 def is_hashable(x):
@@ -452,9 +469,9 @@ def validate_dtype(table, column, values):
         elif dtype in ("number",) and values.dtype.type in NUMERIC_TYPES:
             return
         elif dtype in ("text", "long text", "single-select"):
-            if values.dtype.kind == "U":
-                return
-            if values.dtype == "string[python]":
+            # Not `is_text_dtype`: object arrays may hold non-strings and are
+            # checked value by value below
+            if values.dtype.kind == "U" or isinstance(values.dtype, pd.StringDtype):
                 return
 
     # If list or unknown datatype, bite the bullet and check every value
@@ -535,14 +552,12 @@ def validate_values(values, col=None):
     # Dates must be given as strings "YEAR-MONTH-DAY HOUR:MINUTE:SECONDS"
     if col.dtype == "date":
         # If object type make sure each value is converted correctly
-        # "string[python]" is pandas' string type
-        if values.dtype in ("O", "string[python]"):
-            # Do not use np.isnan here!
-            not_nan = values != None
-
+        if is_text_dtype(values.dtype):
             for i, v in enumerate(values):
-                # Skip empty rows
-                if v == None or v == np.nan:
+                # Skip empty rows (None, NaN, pd.NA or NaT)
+                if v is None or v is pd.NA or v is pd.NaT or (
+                    isinstance(v, float) and np.isnan(v)
+                ):
                     continue
 
                 if isinstance(v, str):

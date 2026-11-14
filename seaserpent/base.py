@@ -3,8 +3,11 @@ import copy
 import json
 import jwt
 import numbers
+import operator
+import re
 import requests
 import time
+import urllib.parse
 import warnings
 
 import datetime as dt
@@ -37,7 +40,9 @@ from .utils import (
     dict_replace,
     is_equal_array,
     is_array_like,
+    is_text_dtype,
 )
+from .endpoints import dtable_url, run_sql, request as api_request
 from .patch import SeaTableAPI, Account
 
 logger = logging.getLogger(__name__)
@@ -54,14 +59,73 @@ if not logger.handlers:
 
 NoneType = type(None)
 
-#: dtable-db returns at most this many rows per SQL request (server-side cap),
-#: regardless of the LIMIT in the query. We page around it with LIMIT/OFFSET.
+#: dtable-db returns at most this many rows per SQL request (server-side cap,
+#: SeaTable's default), regardless of the LIMIT in the query. We page around it
+#: with LIMIT/OFFSET. A server with a raised cap works as is; one with a LOWER
+#: cap would cut pages short, so this must not exceed the server's cap.
 MAX_ROWS_PER_QUERY = 10000
 
 #: How many of those pages to fetch concurrently. dtable-db shows no OFFSET
 #: penalty and parallelises queries happily, but it is shared with the web UI -
 #: so this is deliberately modest rather than "as many pages as there are".
 MAX_QUERY_WORKERS = 4
+
+
+#: Columns of `Table.fetch_logs()` with ``unpack=True`` / ``unpack=False``, and
+#: of `Table.fetch_row_logs()` (used for the empty results, too)
+UNPACKED_LOG_COLUMNS = [
+    "user", "app", "op_time", "op_id", "row_id", "column", "old_value", "new_value",
+]
+LOG_COLUMNS = [
+    "user", "app", "op_time", "op_id", "op_type", "rows_modified", "details",
+]
+ROW_LOG_COLUMNS = [
+    "id", "dtable_uuid", "row_id", "op_user", "op_type", "op_time", "detail",
+]
+
+
+#: SeaTable's filter predicates for number columns, as `Column` comparisons
+NUMBER_PREDICATES = {
+    "equal": operator.eq,
+    "not_equal": operator.ne,
+    "less": operator.lt,
+    "greater": operator.gt,
+    "less_or_equal": operator.le,
+    "greater_or_equal": operator.ge,
+}
+
+#: SeaTable's filter predicates for multiple-select columns; each is also the
+#: name of the `Column` method that builds the filter
+MULTI_SELECT_PREDICATES = ("has_any_of", "has_all_of", "has_none_of", "is_exactly")
+
+
+def _sql_name(name):
+    """Table or column name quoted for SQL (names can be keywords or have spaces)."""
+    return f"`{name}`"
+
+
+def _sql_literal(value):
+    """A value as SQL: text in single quotes (``'it''s'``), anything else as is."""
+    if isinstance(value, str):
+        return "'" + value.replace("'", "''") + "'"
+    return str(value)
+
+
+def _sql_list(values):
+    """SQL list of values, e.g. ``('a', 'it''s')``."""
+    return "(" + ", ".join(_sql_literal(v) for v in values) + ")"
+
+
+def _to_number(x):
+    """Number from a view filter term (stored as a number or as text)."""
+    if isinstance(x, str):
+        try:
+            x = float(x)
+        except ValueError:
+            raise ValueError(f'Unsupported number in view filter: "{x}"') from None
+    if isinstance(x, float) and x.is_integer():
+        return int(x)
+    return x
 
 
 class Table:
@@ -297,14 +361,11 @@ class Table:
     def collaborators(self):
         """List of all user with access to this table (cached)."""
         if isinstance(getattr(self, "_collaborators", None), type(None)):
-            url = (
-                f"{self.server}/dtable-server/api/v1/dtables/"
-                f"{self.base.dtable_uuid}/related-users/"
+            data = api_request(
+                self.base, "GET", dtable_url(self.base, "related-users/")
             )
-            r = requests.get(url, headers=self.base.headers)
-            r.raise_for_status()
 
-            self._collaborators = pd.DataFrame(r.json()["user_list"])
+            self._collaborators = pd.DataFrame(data["user_list"])
             col = self._collaborators.pop("name")  # bring name column to front
             self._collaborators.insert(0, col.name, col)
 
@@ -348,6 +409,10 @@ class Table:
         )
 
     @property
+    def _sql_name(self):
+        return _sql_name(self.name)
+
+    @property
     def id(self):
         """ID of the table."""
         return self.meta["_id"]
@@ -355,7 +420,7 @@ class Table:
     @property
     def server_info(self):
         """Server info."""
-        r = requests.get(f"{self.server}server-info")
+        r = requests.get(f"{self.server.rstrip('/')}/server-info/", timeout=30)
         r.raise_for_status()
         return r.json()
 
@@ -425,7 +490,7 @@ class Table:
         # Validate table
         df = validate_table(df)
 
-        if df[id_col].dtype in (object, "string[python]"):
+        if is_text_dtype(df[id_col].dtype):
             id_col_dtype = "text"
         else:
             id_col_dtype = map_columntype(df[id_col].dtype.kind).name.lower()
@@ -448,7 +513,7 @@ class Table:
 
             col = df[c]
 
-            if col.dtype in (object, "string[python]"):
+            if is_text_dtype(col.dtype):
                 # If all non-null values are lists
                 if all([isinstance(v, list) or pd.isnull(v) for v in col.values]):
                     dtype = "multiple_select"
@@ -544,24 +609,11 @@ class Table:
             for view in views:
                 # Generate view if it doesn't exist yet
                 if view["name"] not in existing_views:
-                    url = (
-                        f"{table.server}/dtable-server/api/v1/dtables/"
-                        f"{table.base.dtable_uuid}/views/"
-                        f"?table_name={table_name}"
-                    )
-                    r = requests.post(
-                        url, headers=table.base.headers, json={"name": view["name"]}
-                    )
-                    r.raise_for_status()
-
-                    # Data contains the ID of the view
-                    _ = r.json()
+                    table.base.add_view(table_name, view["name"])
 
                 # Now actually set the view
-                url = (
-                    f"{table.server}/dtable-server/api/v1/dtables/"
-                    f"{table.base.dtable_uuid}/views/{view['name']}"
-                    f"?table_name={table_name}"
+                url = dtable_url(
+                    table.base, f"views/{urllib.parse.quote(view['name'], safe='')}/"
                 )
 
                 # These are the parameters we can send
@@ -577,10 +629,13 @@ class Table:
                 )
                 data = {p: view[p] for p in params if p in view}
 
-                r = requests.put(url, headers=table.base.headers, json=data)
-                r.raise_for_status()
-
-                data = r.json()
+                api_request(
+                    table.base,
+                    "PUT",
+                    url,
+                    params={"table_name": table_name},
+                    json=data,
+                )
 
             logger.info("Views added.")
 
@@ -899,6 +954,12 @@ class Table:
         else:
             rows = np.asarray(rows)
 
+        # Text from pandas (e.g. a column of row IDs) arrives as an object array
+        if rows.dtype == object and pd.api.types.infer_dtype(rows) == "string":
+            if any(pd.isnull(rows)):
+                raise ValueError("Row IDs must not contain missing values.")
+            rows = rows.astype(str)
+
         if rows.dtype.kind == "U":
             miss = ~np.isin(rows, self.row_ids)
             if any(miss):
@@ -963,21 +1024,21 @@ class Table:
             ):
                 return
 
-        url = self.base._table_server_url()
-
-        json_data = {"table_name": self.name}
-        r = requests.delete(
-            url, json=json_data, headers=self.base.headers, timeout=self.base.timeout
+        # Same request as seatable-api's `delete_table`, but with our errors
+        resp = api_request(
+            self.base, "DELETE", dtable_url(self.base, "tables/"),
+            json={"table_name": self.name},
         )
-        r.raise_for_status()
 
-        if "success" in r.content.decode():
+        if resp.get("success"):
             logger.info("Table successfully deleted!")
         else:
-            logger.warning(f"Something went wrong: {r.content.decode()}")
+            logger.warning(f"Something went wrong: {resp}")
 
     def time_machine(self, date, columns=None):
         """Recreate version of table at a given point in time.
+
+        Only reaches back as far as the server keeps logs (see `fetch_logs`).
 
         Important: this is work in progress and does currently not revert
         deleted or added columns/rows!
@@ -1043,6 +1104,10 @@ class Table:
     def fetch_logs(self, max_entries=25, max_time=None, unpack=True, progress=True):
         """Fetch activity logs for this table.
 
+        Note that the server only keeps a limited history: SeaTable's
+        default clean-up deletes operation logs after 14 days and row
+        activities after 30 days (on by default from SeaTable 6.2).
+
         Parameters
         ----------
         max_entries :   int
@@ -1086,15 +1151,12 @@ class Table:
             desc="Fetching logs", total=total, leave=False, disable=not progress
         ) as pbar:
             while True:
-                url = (
-                    f"{self.server}/dtable-server/api/v1/dtables/"
-                    f"{self.base.dtable_uuid}/operations/"
-                    f"?page={page}&per_page=25"
-                )  # per_page seems to be hard-coded
-                r = requests.get(url, headers=self.base.headers)
-                r.raise_for_status()
-
-                data = r.json()["operations"]
+                data = api_request(
+                    self.base,
+                    "GET",
+                    dtable_url(self.base, "operations/"),
+                    params={"page": page, "per_page": 25},
+                )["operations"]  # per_page seems to be hard-coded
 
                 # Stop if no more pages
                 if not data:
@@ -1134,7 +1196,11 @@ class Table:
                 page += 1
 
         # Combine
-        logs = pd.concat([ta for ta in logs if not ta.empty], axis=0)
+        logs = [ta for ta in logs if not ta.empty]
+        if not logs:
+            # No edits to this table in the history the server still keeps
+            return pd.DataFrame(columns=UNPACKED_LOG_COLUMNS if unpack else LOG_COLUMNS)
+        logs = pd.concat(logs, axis=0)
 
         if max_time:
             logs = logs[logs.op_time >= max_time]
@@ -1186,31 +1252,23 @@ class Table:
                     row_id = details["row_id"]
                     details["row_ids"] = [row_id]
                     details["updated"] = {row_id: details["updated"]}
-                    details["old_rows"] = {row_id: details["old_row"]}
+                    details["old_rows"] = {row_id: details.get("old_row")}
 
+                # The server doesn't always record the old values (e.g. some
+                # edits from the web page, or API edits on SeaTable 6.2), so
+                # missing ones are returned as None
+                old_rows = details.get("old_rows") or {}
                 for id in details["row_ids"]:
-                    for col, new_value in details["updated"][id].items():
+                    for col, new_value in details["updated"].get(id, {}).items():
                         # Skip internal columns like '_last_modifier'
                         if col.startswith("_"):
                             continue
-                        old_value = details["old_rows"][id].get(col, None)
+                        old_value = (old_rows.get(id) or {}).get(col, None)
                         unpacked.append(
                             [user, app, op_time, op_id, id, col, old_value, new_value]
                         )
 
-            logs = pd.DataFrame(
-                unpacked,
-                columns=[
-                    "user",
-                    "app",
-                    "op_time",
-                    "op_id",
-                    "row_id",
-                    "column",
-                    "old_value",
-                    "new_value",
-                ],
-            )
+            logs = pd.DataFrame(unpacked, columns=UNPACKED_LOG_COLUMNS)
 
             logs["column"] = self._col_ids_to_names(logs.column.values)
             for c in ["user", "app", "column"]:
@@ -1223,6 +1281,8 @@ class Table:
         self, ids, max_entries=25, max_time=None, unpack=True, progress=True
     ):
         """Fetch activity logs for given row(s).
+
+        Only reaches back as far as the server keeps logs (see `fetch_logs`).
 
         Parameters
         ----------
@@ -1285,15 +1345,12 @@ class Table:
                 entries = 0
                 page = 1
                 while True:
-                    url = (
-                        f"{self.server}/dtable-server/api/v1/dtables/"
-                        f"{self.base.dtable_uuid}/activities/"
-                        f"?row_id={i}&page={page}&per_page=25"
-                    )  # per_page seems to be hard-coded
-                    r = requests.get(url, headers=self.base.headers)
-                    r.raise_for_status()
-
-                    data = r.json()["activities"]
+                    data = api_request(
+                        self.base,
+                        "GET",
+                        dtable_url(self.base, "activities/"),
+                        params={"row_id": i, "page": page, "per_page": 25},
+                    )["activities"]  # per_page seems to be hard-coded
 
                     # Stop if no more pages
                     if not data:
@@ -1329,6 +1386,10 @@ class Table:
                     page += 1
 
         # Combine and return
+        logs = [ta for ta in logs if not ta.empty]
+        if not logs:
+            # No activity for these rows in the history the server still keeps
+            return pd.DataFrame(columns=ROW_LOG_COLUMNS)
         return pd.concat(logs, axis=0)
 
     @check_token
@@ -1384,13 +1445,13 @@ class Table:
         if isinstance(view, str):
             if view not in self.views:
                 raise ValueError(f'"{view}" not found')
-            view = [v for v in self.meta["views"] if v["name"] == view]
-            if len(view) > 1:
+            matches = [v for v in self.meta["views"] if v["name"] == view]
+            if len(matches) > 1:
                 raise ValueError(
                     f'Found multiple views with name "{view}". '
                     "Consider using an index instead."
                 )
-            view = view[0]
+            view = matches[0]
         elif isinstance(view, int):
             view = self.meta["views"][view]
         else:
@@ -1404,16 +1465,17 @@ class Table:
         view["filters_grp"] = {}
         for f in view["filters"]:
             # Translate col IDs to names while we're at it
+            pred = f["filter_predicate"]
+            term = f.get("filter_term")
+            # SeaTable ignores filters that have no value set
+            if pred not in ("is_empty", "is_not_empty") and term in (None, "", []):
+                continue
+
             col_name = [
                 c["name"] for c in self.meta["columns"] if c["key"] == f["column_key"]
             ][0]
-            if col_name not in view["filters_grp"]:
-                view["filters_grp"][col_name] = {}
-
-            pred = f["filter_predicate"]
-            if pred not in view["filters_grp"][col_name]:
-                view["filters_grp"][col_name][pred] = []
-            view["filters_grp"][col_name][pred].append(f["filter_term"])
+            preds = view["filters_grp"].setdefault(col_name, {})
+            preds.setdefault(pred, []).append(term)
 
         filters = []
         for col_name in view["filters_grp"]:
@@ -1424,19 +1486,22 @@ class Table:
             for predicate in view["filters_grp"][col_name]:
                 terms = view["filters_grp"][col_name][predicate]
 
-                if predicate == "is" and len(terms) > 1:
-                    predicate = "is_any_of"
-                elif predicate == "is_not" and len(terms) > 1:
-                    predicate = "is_none_of"
+                if predicate in MULTI_SELECT_PREDICATES and col.dtype == "multiple-select":
+                    # One list of option IDs per filter; don't merge them
+                    for term in terms:
+                        names = col._ids_to_values(make_iterable(term))
+                        filters.append(getattr(col, predicate)(names))
+                    continue
 
                 terms = flatten(terms)
                 terms = col._ids_to_values(terms)
 
                 # Flatten a potential list of lists
+                # One filter per term: they are joined by the view's AND/OR
                 if predicate == "is":
-                    filters.append(col == terms[0])
+                    filters += [col == t for t in terms]
                 elif predicate == "is_not":
-                    filters.append(col != terms[0])
+                    filters += [col != t for t in terms]
                 elif predicate == "is_not_empty":
                     filters.append(col.notnull())
                 elif predicate == "is_empty":
@@ -1451,33 +1516,43 @@ class Table:
                 elif predicate == "does_not_contain":
                     for t in terms:
                         filters.append(~col.contains(t))
+                elif predicate in NUMBER_PREDICATES:
+                    compare = NUMBER_PREDICATES[predicate]
+                    for t in terms:
+                        filters.append(compare(col, _to_number(t)))
                 else:
-                    raise ValueError(
-                        f'Unsupported filter predicate: "{f["filter_predicate"]}"'
-                    )
+                    raise ValueError(f'Unsupported filter predicate: "{predicate}"')
 
         conj = view.get("filter_conjunction", "AND")
-        comb = Filter(f" {conj} ".join([f"({f.query})" for f in filters]))
+        # No filters (or only ignored ones): all rows, no WHERE clause
+        comb = Filter(f" {conj} ".join([f"({f.query})" for f in filters])) if filters else None
 
+        sorts = view.get("sorts") if sort else None
+        sort_cols = self._col_ids_to_names([s["column_key"] for s in sorts]) if sorts else []
+
+        hidden_cols = []
         if hide_cols:
             hidden_cols = self._col_ids_to_names(view.get("hidden_columns", []))
-            cols = [c for c in self.columns if c not in hidden_cols]
+            # Hidden columns the view sorts by are fetched, then dropped below
+            cols = [c for c in self.columns if c not in hidden_cols or c in sort_cols]
 
             data = self.loc[comb, cols]
         else:
             data = self.loc[comb]
 
-        if sort and view.get("sorts", None):
-            cols = self._col_ids_to_names([s["column_key"] for s in view["sorts"]])
-            asc = [True if s["sort_type"] == "up" else False for s in view["sorts"]]
+        if sorts:
+            asc = [s["sort_type"] == "up" for s in sorts]
+            data = data.sort_values(sort_cols, ascending=asc)
 
-            data = data.sort_values(cols, ascending=asc)
-
+        hidden_sort_cols = [c for c in sort_cols if c in hidden_cols]
+        if hidden_sort_cols:
+            data = data.drop(columns=hidden_sort_cols)
         return data
 
+    @check_token
     def head(self, n=5):
         """Return top N rows as pandas DataFrame."""
-        data = self.base.query(f"SELECT * FROM {self.name} LIMIT {n}")
+        data = run_sql(self.base, f"SELECT * FROM {self._sql_name} LIMIT {n}")
         return process_records(
             data,
             columns=self.columns,
@@ -1619,7 +1694,7 @@ class Table:
                         How many pages to fetch in parallel. See `Table.query`.
 
         """
-        data = self.query(f"SELECT * FROM {self.name}", no_limit=True, workers=workers)
+        data = self.query(f"SELECT * FROM {self._sql_name}", no_limit=True, workers=workers)
         return process_records(
             data,
             columns=self.columns,
@@ -1657,15 +1732,15 @@ class Table:
 
         """
         if isinstance(query, Filter):
-            query = f"SELECT * from {self.name} WHERE {query.query}"
+            query = f"SELECT * FROM {self._sql_name} WHERE {query.query}"
 
         if "from" not in query.lower():
-            query = f"{query} FROM {self.name}"
+            query = f"{query} FROM {self._sql_name}"
         if no_limit and "LIMIT" not in query.upper():
             # Page around dtable-db's hard MAX_ROWS_PER_QUERY-per-request cap.
             return self._query_all(query, convert=convert, workers=workers)
         logger.debug(f"Running SQL query: {query}")
-        return self.base.query(query, convert=convert)
+        return run_sql(self.base, query, convert=convert)
 
     def _query_all(self, query, convert=True, workers=None):
         """Run a SELECT query, paging with LIMIT/OFFSET to fetch ALL rows.
@@ -1717,7 +1792,7 @@ class Table:
         def fetch(offset):
             paged = f"{query} LIMIT {page_size} OFFSET {offset}"
             logger.debug(f"Running SQL query: {paged}")
-            page = self.base.query(paged, convert=convert)
+            page = run_sql(self.base, paged, convert=convert)
             if pbar is not None:
                 pbar.update(len(page))
             return page
@@ -1770,43 +1845,42 @@ class Column:
         """Number of rows in column."""
         return len(self.table)
 
-    def __eq__(self, other):
+    @property
+    def _sql_name(self):
+        """Column name quoted for SQL (names can be keywords or have spaces)."""
+        return _sql_name(self.name)
+
+    def _compare(self, op, other, numbers_only=False):
         _ = validate_comparison(self, other)
-        if isinstance(other, str):
-            # Escape the value
-            return Filter(f"{self.name} = '{other}'")
-        else:
-            # This is assuming other is a number
-            return Filter(f"{self.name} = {other}")
+        if numbers_only and not isinstance(other, numbers.Number):
+            raise TypeError(f"'{op}' not supported between column and {type(other)}")
+        return Filter(f"{self._sql_name} {op} {_sql_literal(other)}")
+
+    def __eq__(self, other):
+        return self._compare("=", other)
 
     def __ne__(self, other):
-        return Filter((self == other).query.replace("=", "!="))
+        return self._compare("!=", other)
 
     def __ge__(self, other):
-        return Filter((self > other).query.replace(">", ">="))
+        return self._compare(">=", other, numbers_only=True)
 
     def __gt__(self, other):
-        _ = validate_comparison(self, other)
-        if isinstance(other, numbers.Number):
-            return Filter(f"{self.name} > {other}")
-        raise TypeError(f"'>' not supported between column and {type(other)}")
+        return self._compare(">", other, numbers_only=True)
 
     def __le__(self, other):
-        return Filter((self < other).query.replace("<", "<="))
+        return self._compare("<=", other, numbers_only=True)
 
     def __lt__(self, other):
-        _ = validate_comparison(self, other)
-        if isinstance(other, numbers.Number):
-            return Filter(f"{self.name} < {other}")
-        raise TypeError(f"'>' not supported between column and {type(other)}")
+        return self._compare("<", other, numbers_only=True)
 
     def __and__(self, other):
         if isinstance(other, Column):
             if other.dtype == "checkbox":
-                return Filter(f"{self.name} AND {other.name}")
+                return Filter(f"{self._sql_name} AND {other._sql_name}")
         elif isinstance(other, Filter):
             if self.dtype == "checkbox":
-                return Filter(f"{self.name}") & other
+                return Filter(self._sql_name) & other
             else:
                 raise TypeError(
                     f"Unable to construct filter from column of type {self.dtype}"
@@ -1817,10 +1891,10 @@ class Column:
     def __or__(self, other):
         if isinstance(other, Column):
             if other.dtype == "checkbox":
-                return Filter(f"{self.name} OR {other.name}")
+                return Filter(f"{self._sql_name} OR {other._sql_name}")
         elif isinstance(other, Filter):
             if self.dtype == "checkbox":
-                return Filter(f"{self.name}") | other
+                return Filter(self._sql_name) | other
             else:
                 raise TypeError(
                     f"Unable to construct filter from column of type {self.dtype}"
@@ -1829,13 +1903,11 @@ class Column:
         raise TypeError(f'Unable to combine Column and "{type(other)}"')
 
     def __contains__(self, value):
-        # Add quotation marks to string
-        if isinstance(value, str):
-            value = f"'{value}'"
+        value = _sql_literal(value)
         q = (
-            f"SELECT `{self.name}` "
-            f"FROM {self.table.name} "
-            f"WHERE {self.name} = {value} "
+            f"SELECT {self._sql_name} "
+            f"FROM {self.table._sql_name} "
+            f"WHERE {self._sql_name} = {value} "
             "LIMIT 1"
         )
         return any(self.table.query(q))
@@ -1902,10 +1974,11 @@ class Column:
 
         id_map = {r["id"]: r["name"] for r in self.meta["data"]["options"]}
 
+        # Unknown IDs (e.g. options deleted since) are passed through
         if not is_iterable(ids):
-            return id_map[ids]
+            return id_map.get(ids, ids)
 
-        return [id_map[i] for i in ids]
+        return [id_map.get(i, i) for i in ids]
 
     def astype(self, dtype, errors="raise"):
         """Download and cast data to specified dtype ``dtype``.
@@ -1931,9 +2004,9 @@ class Column:
     def to_series(self):
         """Return this column as pandas.Series."""
         if self.name != "_id":
-            query = f"SELECT `{self.name}`, _id"
+            query = f"SELECT {self._sql_name}, _id"
         else:
-            query = f"SELECT `{self.name}`"
+            query = f"SELECT {self._sql_name}"
         rows = self.table.query(query, no_limit=True)
         return process_records(
             rows,
@@ -1990,9 +2063,11 @@ class Column:
             raise TypeError(f'`pat` must be str, not "{type(pat)}"')
 
         if self.dtype == "text":
-            return Filter(f"{self.name} LIKE '%{pat}%'")
+            return Filter(f"{self._sql_name} LIKE {_sql_literal(f'%{pat}%')}")
         elif self.dtype in ("single-select", "multiple-select"):
-            return self.isin([o for o in self.options if pat in o])
+            matches = [o for o in self.options if pat in o]
+            # No option contains `pat`: a filter that matches no row
+            return self.isin(matches) if matches else Filter("1 = 0")
         raise ValueError(
             "Can only Filter by substring if Column is of "
             f'type "text" or single-/multiple-select, not {self.dtype}'
@@ -2007,7 +2082,7 @@ class Column:
             )
         if not isinstance(pat, str):
             raise TypeError(f'`pat` must be str, not "{type(pat)}"')
-        return Filter(f"{self.name} LIKE '{pat}%'")
+        return Filter(f"{self._sql_name} LIKE {_sql_literal(f'{pat}%')}")
 
     def endswith(self, pat):
         """Filter to strings ending with given substring."""
@@ -2018,7 +2093,7 @@ class Column:
             )
         if not isinstance(pat, str):
             raise TypeError(f'`pat` must be str, not "{type(pat)}"')
-        return Filter(f"{self.name} LIKE '%{pat}'")
+        return Filter(f"{self._sql_name} LIKE {_sql_literal(f'%{pat}')}")
 
     def isin(self, other, online=True):
         """Filter to values in `other`.
@@ -2054,11 +2129,34 @@ class Column:
         _ = validate_comparison(self, other, allow_iterable=True)
 
         if online:
-            other = tuple(other)
-
-            return Filter(f"{self.name} IN {str(other)}")
+            return Filter(f"{self._sql_name} IN {_sql_list(other)}")
         else:
             return self.to_series().isin(other)
+
+    def _multi_select(self, op, values):
+        if self.dtype != "multiple-select":
+            raise TypeError(f'Column must be of type "multiple-select", not {self.dtype}')
+        values = make_iterable(values)
+        if not len(values):
+            raise ValueError("Unable to compare empty container")
+        return Filter(f"{self._sql_name} {op} {_sql_list(values)}")
+
+    def has_any_of(self, values):
+        """Filter to rows whose multiple-select cell has any of `values`."""
+        return self._multi_select("HAS ANY OF", values)
+
+    def has_all_of(self, values):
+        """Filter to rows whose multiple-select cell has all of `values`."""
+        return self._multi_select("HAS ALL OF", values)
+
+    def has_none_of(self, values):
+        """Filter to rows whose multiple-select cell has none of `values`
+        (includes empty cells)."""
+        return self._multi_select("HAS NONE OF", values)
+
+    def is_exactly(self, values):
+        """Filter to rows whose multiple-select cell is exactly `values`."""
+        return self._multi_select("IS EXACTLY", values)
 
     def isnull(self, empty_str=True):
         """Filter for NULL.
@@ -2075,9 +2173,9 @@ class Column:
 
         """
         if empty_str and self.dtype == "text":
-            return Filter(f"{self.name} IS NULL or {self.name} = ''")
+            return Filter(f"{self._sql_name} IS NULL or {self._sql_name} = ''")
         else:
-            return Filter(f"{self.name} IS NULL")
+            return Filter(f"{self._sql_name} IS NULL")
 
     def notnull(self, empty_str=True):
         """Filter for not NULL.
@@ -2094,9 +2192,9 @@ class Column:
 
         """
         if empty_str and self.dtype == "text":
-            return Filter(f"{self.name} IS NOT NULL and {self.name} != ''")
+            return Filter(f"{self._sql_name} IS NOT NULL and {self._sql_name} != ''")
         else:
-            return Filter(f"{self.name} IS NOT NULL")
+            return Filter(f"{self._sql_name} IS NOT NULL")
 
     def map(self, arg, na_action=None):
         """Map values of columns according to input correspondence.
@@ -2143,7 +2241,7 @@ class Column:
         if "name" not in resp:
             raise ValueError(f"Error writing to table: {resp}")
 
-        logger.info(f"Column renamed: {self.name} -> {self.new_name}")
+        logger.info(f"Column renamed: {self.name} -> {new_name}")
 
         # Update table meta data
         _ = self.table.fetch_meta()
@@ -2206,7 +2304,7 @@ class Column:
 
     def unique(self):
         """Return unique values in this column."""
-        rows = self.table.query(f"SELECT DISTINCT `{self.name}`", no_limit=True)
+        rows = self.table.query(f"SELECT DISTINCT {self._sql_name}", no_limit=True)
 
         return (
             process_records(
@@ -2319,34 +2417,43 @@ class Filter:
     def __str__(self):
         return f'SQL filter query <"{self.query}">'
 
+    #: Operator -> its opposite, checked in this order
+    _INVERSES = (
+        (" HAS ANY OF ", " HAS NONE OF "),
+        (" HAS NONE OF ", " HAS ANY OF "),
+        (" HAS ALL OF ", None),
+        (" IS EXACTLY ", None),
+        (" = ", " != "),
+        (" != ", " = "),
+        (" NOT IN ", " IN "),
+        (" IN ", " NOT IN "),
+        (" IS NOT ", " IS "),
+        (" IS ", " IS NOT "),
+        (" NOT LIKE ", " LIKE "),
+        (" LIKE ", " NOT LIKE "),
+    )
+
     def __invert__(self):
-        if " AND " in self.query or " or " in self.query:
+        # Blank out quoted values and names so operators inside them
+        # (e.g. LIKE '%a = b%') are not mistaken for the filter's own
+        q = self.query
+        masked = re.sub(r"'(?:[^']|'')*'|`[^`]*`", lambda m: "_" * len(m.group()), q)
+        if " AND " in masked or " or " in masked or " OR " in masked:
             raise ValueError("Unable to invert Filter combinations")
-        elif " = " in self.query:
-            return Filter(self.query.replace(" = ", " != "))
-        elif " != " in self.query:
-            return Filter(self.query.replace(" != ", " = "))
-        elif " NOT IN " in self.query:
-            return Filter(self.query.replace(" NOT IN ", " IN "))
-        elif " IN " in self.query:
-            return Filter(self.query.replace(" IN ", " NOT IN "))
-        elif " IS NOT " in self.query:
-            return Filter(self.query.replace(" IS NOT ", " IS "))
-        elif " IS " in self.query:
-            return Filter(self.query.replace(" IS ", " IS NOT "))
-        elif " NOT LIKE " in self.query:
-            return Filter(self.query.replace(" NOT LIKE ", " LIKE "))
-        elif " LIKE " in self.query:
-            return Filter(self.query.replace(" LIKE ", " NOT LIKE "))
-        else:
-            raise ValueError(f'Unable to invert Filter "{self.query}"')
+        for op, inverse in self._INVERSES:
+            i = masked.find(op)
+            if i >= 0 and inverse:
+                return Filter(q[:i] + inverse + q[i + len(op):])
+            if i >= 0:
+                break
+        raise ValueError(f'Unable to invert Filter "{q}"')
 
     def __and__(self, other):
         if isinstance(other, Filter):
             return Filter(f"({self.query}) AND ({other.query})")
         elif isinstance(other, Column):
             if other.dtype == "checkbox":
-                return Filter(f"({self.query}) AND {other.name}")
+                return Filter(f"({self.query}) AND {other._sql_name}")
             raise TypeError(
                 f'Unable to combine Filter and column of type "{other}.dtype"'
             )
@@ -2358,7 +2465,7 @@ class Filter:
             return Filter(f"({self.query}) OR ({other.query})")
         elif isinstance(other, Column):
             if other.dtype == "checkbox":
-                return Filter(f"({self.query}) OR ({other.name})")
+                return Filter(f"({self.query}) OR ({other._sql_name})")
 
         raise TypeError(f'Unable to combine Filter and "{type(other)}"')
 
@@ -2527,11 +2634,11 @@ class iLocIndexer:
 
             # Construct the query
             if start and stop:
-                q = f"SELECT * FROM {self.table.name} LIMIT {start}, {stop}"
+                q = f"SELECT * FROM {self.table._sql_name} LIMIT {start}, {stop}"
             elif start:
-                q = f"SELECT * FROM {self.table.name} LIMIT {start}, {self.table.shape[0] - start}"
+                q = f"SELECT * FROM {self.table._sql_name} LIMIT {start}, {self.table.shape[0] - start}"
             else:
-                q = f"SELECT * FROM {self.table.name} LIMIT {stop}"
+                q = f"SELECT * FROM {self.table._sql_name} LIMIT {stop}"
 
             data = self.table.query(q)
 
@@ -2575,12 +2682,12 @@ def create_query(table, columns=None, where=None, limit=None):
         columns = make_iterable(columns).astype(str)
         q = "SELECT "
         for col in columns:
-            q += f"`{col}`, "
+            q += f"{_sql_name(col)}, "
         q = q[:-2]  # Remove last comma
     else:
         q = " SELECT *"
 
-    q += f" FROM {table.name}"
+    q += f" FROM {table._sql_name}"
 
     if not isinstance(where, type(None)):
         if isinstance(where, Filter):
@@ -2591,7 +2698,7 @@ def create_query(table, columns=None, where=None, limit=None):
                     "Can only query by columns with dtype "
                     f'"checkbox", got "{where.dtype}"'
                 )
-            q += f" WHERE {where.name} = True"
+            q += f" WHERE {where._sql_name} = True"
         elif isinstance(where, slice):
             if slice.start == slice.stop:
                 raise KeyError("Slice start and stop must not be the same")

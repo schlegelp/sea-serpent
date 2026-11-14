@@ -143,6 +143,9 @@ def convert_db_rows(metadata, results, utc=False):
     return converted_results
 
 
+# sea-serpent itself sends SQL through `endpoints.run_sql`, which always uses
+# the function above. These patches only matter for code that calls
+# `base.query()` from seatable-api directly.
 seatable_api.utils.convert_db_rows = convert_db_rows
 seatable_api.main.convert_db_rows = convert_db_rows
 
